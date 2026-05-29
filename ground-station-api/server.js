@@ -256,6 +256,42 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "ground-stat
 app.use(authenticate);
 
 // --- Station endpoints (chaos applies) ---------------------------------------
+
+// List every command stored at a single station (paginated). Chaos applies, so
+// a blackout/throttle here behaves the same as on the per selector endpoints.
+app.get("/groundstation/:station", async (req, res) => {
+  const station = req.params.station.toLowerCase();
+  if (!STATIONS.includes(station)) return res.status(404).json({ error: "Unknown station" });
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const perPage = Math.min(200, Math.max(1, parseInt(req.query.perPage) || 50));
+  const offset = (page - 1) * perPage;
+  try {
+    const rules = await activeRules(req.teamId, station);
+    const chaos = await applyChaos(req.teamId, station, rules);
+    if (chaos) return res.status(chaos.status).set(chaos.headers || {}).json(chaos.body);
+
+    // station is whitelisted above, so the column name is safe to interpolate.
+    const col = `${station}_payload`;
+    const totalQ = await pool.query(
+      `SELECT count(*)::int AS total FROM replication_records
+         WHERE team_id = $1 AND ${col} IS NOT NULL`,
+      [req.teamId]
+    );
+    const { rows } = await pool.query(
+      `SELECT selector, ${col} AS payload, sequence_number, updated_at
+         FROM replication_records
+         WHERE team_id = $1 AND ${col} IS NOT NULL
+         ORDER BY updated_at DESC
+         LIMIT $2 OFFSET $3`,
+      [req.teamId, perPage, offset]
+    );
+    res.json({ station, page, perPage, total: totalQ.rows[0].total, items: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 app.get("/groundstation/:station/:selector", async (req, res) => {
   const station = req.params.station.toLowerCase();
   if (!STATIONS.includes(station)) return res.status(404).json({ error: "Unknown station" });

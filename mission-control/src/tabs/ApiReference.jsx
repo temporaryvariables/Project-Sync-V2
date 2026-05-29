@@ -37,6 +37,21 @@ const ENDPOINTS = [
 }`,
   },
   {
+    method: "GET",
+    path: "/groundstation/:station",
+    auth: true,
+    desc: "List every command currently stored at one station (paginated). Chaos rules apply.",
+    response: `{
+  "station": "nasa",
+  "page": 1,
+  "perPage": 50,
+  "total": 42,
+  "items": [
+    { "selector": "cmd-4821", "payload": "fire_thruster", "sequence_number": 12 }
+  ]
+}`,
+  },
+  {
     method: "DELETE",
     path: "/groundstation/:station/:selector",
     auth: true,
