@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+pocketbase/pb_data/
+pocketbase/pocketbase
+pocketbase/pocketbase.exe
+coverage/
+.vscode/*
+!.vscode/extensions.json

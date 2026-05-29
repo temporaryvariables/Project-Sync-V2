@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mission}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mission_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-projectsync}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mission} -d ${POSTGRES_DB:-projectsync}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pocketbase:
+    build: ./pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb/pb_data
+
+  ground-station-api:
+    build: ./ground-station-api
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mission}:${POSTGRES_PASSWORD:-mission_secret}@postgres:5432/${POSTGRES_DB:-projectsync}
+      POCKETBASE_URL: http://pocketbase:8090
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  flight-director-api:
+    build: ./flight-director-api
+    environment:
+      PORT: 3002
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mission}:${POSTGRES_PASSWORD:-mission_secret}@postgres:5432/${POSTGRES_DB:-projectsync}
+      POCKETBASE_URL: http://pocketbase:8090
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  deep-space-network:
+    build: ./deep-space-network
+    environment:
+      PORT: 3003
+      POCKETBASE_URL: http://pocketbase:8090
+      GROUND_STATION_URL: http://ground-station-api:3001
+    ports:
+      - "3003:3003"
+    depends_on:
+      - ground-station-api
+
+  rover-relay-starter:
+    build: ./rover-relay-starter
+    environment:
+      PORT: 4000
+      GROUND_STATION_URL: http://ground-station-api:3001
+    ports:
+      - "4000:4000"
+    depends_on:
+      - ground-station-api
+
+  mission-control:
+    build:
+      context: ./mission-control
+      args:
+        VITE_POCKETBASE_URL: ${VITE_POCKETBASE_URL:-http://localhost:8090}
+        VITE_GROUND_STATION_URL: ${VITE_GROUND_STATION_URL:-http://localhost:3001}
+        VITE_FLIGHT_DIRECTOR_URL: ${VITE_FLIGHT_DIRECTOR_URL:-http://localhost:3002}
+        VITE_DEEP_SPACE_NETWORK_URL: ${VITE_DEEP_SPACE_NETWORK_URL:-http://localhost:3003}
+    ports:
+      - "3000:80"
+    depends_on:
+      - ground-station-api
+      - flight-director-api
+      - deep-space-network
+
+volumes:
+  pgdata:
+  pb_data:
