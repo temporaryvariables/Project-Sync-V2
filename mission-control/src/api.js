@@ -1,8 +1,16 @@
 import { token } from "./pb";
 
-const GROUND_STATION_URL = import.meta.env.VITE_GROUND_STATION_URL || "http://localhost:3001";
-const FLIGHT_DIRECTOR_URL = import.meta.env.VITE_FLIGHT_DIRECTOR_URL || "http://localhost:3002";
-const DEEP_SPACE_NETWORK_URL = import.meta.env.VITE_DEEP_SPACE_NETWORK_URL || "http://localhost:3003";
+// Accept service URLs with or without a scheme. A bare host like
+// "stations.example.com" becomes "https://stations.example.com".
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
+
+const GROUND_STATION_URL = normalizeUrl(import.meta.env.VITE_GROUND_STATION_URL, "http://localhost:3001");
+const FLIGHT_DIRECTOR_URL = normalizeUrl(import.meta.env.VITE_FLIGHT_DIRECTOR_URL, "http://localhost:3002");
+const DEEP_SPACE_NETWORK_URL = normalizeUrl(import.meta.env.VITE_DEEP_SPACE_NETWORK_URL, "http://localhost:3003");
 
 async function request(base, path, options = {}) {
   const res = await fetch(`${base}${path}`, {

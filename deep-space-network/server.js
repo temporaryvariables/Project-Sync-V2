@@ -16,8 +16,17 @@ import express from "express";
 import cors from "cors";
 
 const PORT = process.env.PORT || 3003;
-const POCKETBASE_URL = process.env.POCKETBASE_URL || "http://localhost:8090";
-const GROUND_STATION_URL = process.env.GROUND_STATION_URL || "http://localhost:3001";
+const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
+const GROUND_STATION_URL = normalizeUrl(process.env.GROUND_STATION_URL, "http://localhost:3001");
+
+// Accept service URLs with or without a scheme. A bare host like
+// "auth.example.com" becomes "https://auth.example.com", while explicit
+// internal URLs like "http://ground-station-api:3001" are left untouched.
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
 
 // Safety net: the dev only auth bypass must never run in production.
 if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production") {

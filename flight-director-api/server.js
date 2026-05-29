@@ -12,9 +12,19 @@ import cors from "cors";
 import pg from "pg";
 
 const PORT = process.env.PORT || 3002;
-const POCKETBASE_URL = process.env.POCKETBASE_URL || "http://localhost:8090";
+const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
 const STATIONS = ["nasa", "esa", "jaxa", "all"];
 const MODES = ["blackout", "throttle", "signal_delay", "incorrect_ordering"];
+
+// Accept service URLs with or without a scheme. A bare host like
+// "auth.example.com" becomes "https://auth.example.com", while explicit
+// internal URLs like "http://pocketbase:8090" are left untouched. Not used for
+// the database connection string.
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
 
 // Safety net: the dev only auth bypass must never run in production.
 if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production") {
@@ -23,6 +33,51 @@ if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production")
 }
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+
+// Database schema, kept in sync with postgres/init.sql. Every statement is
+// idempotent (IF NOT EXISTS), so running it is safe on every reset: on a fresh
+// database it creates the tables, and afterwards it is a harmless no op. This
+// means the platform never needs a manual psql step to initialize.
+const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS replication_records (
+    id              BIGSERIAL PRIMARY KEY,
+    team_id         TEXT        NOT NULL,
+    selector        TEXT        NOT NULL,
+    expected_payload TEXT,
+    nasa_payload    TEXT,
+    esa_payload     TEXT,
+    jaxa_payload    TEXT,
+    sequence_number BIGINT,
+    if_match        TEXT,
+    expected_status TEXT,
+    data_in_sync    BOOLEAN,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (team_id, selector)
+);
+CREATE INDEX IF NOT EXISTS idx_replication_records_team
+    ON replication_records (team_id);
+CREATE INDEX IF NOT EXISTS idx_replication_records_team_updated
+    ON replication_records (team_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS chaos_rules (
+    id          BIGSERIAL PRIMARY KEY,
+    station     TEXT        NOT NULL DEFAULT 'all',
+    team_id     TEXT,
+    mode        TEXT        NOT NULL,
+    config      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    enabled     BOOLEAN     NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chaos_rules_enabled
+    ON chaos_rules (enabled);
+`;
+
+// Creates the schema if it does not exist yet. Safe to call repeatedly.
+async function ensureSchema() {
+  await pool.query(SCHEMA_SQL);
+}
 
 const app = express();
 app.use(cors());
@@ -62,9 +117,12 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "flight-dire
 
 app.use(authenticate);
 
-// --- Reset: wipe this team's records and chaos rules -------------------------
+// --- Reset: create the schema if needed, then wipe this team's data ----------
+// On a fresh database the first reset creates the tables (deleting nothing).
+// Afterwards it is the usual team scoped wipe. This removes any need for psql.
 app.post("/reset", async (req, res) => {
   try {
+    await ensureSchema();
     const records = await pool.query(
       `DELETE FROM replication_records WHERE team_id = $1`,
       [req.teamId]
@@ -230,4 +288,10 @@ app.get("/teams/:teamId/records", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`flight-director-api listening on ${PORT}`);
+  // Best effort: make sure the tables exist as soon as the service is up, so a
+  // fresh deployment is usable without anyone calling /reset first. If the
+  // database is briefly unreachable at boot, /reset will create them later.
+  ensureSchema()
+    .then(() => console.log("schema ready"))
+    .catch((err) => console.error("schema init on boot failed (will retry on /reset):", err.message));
 });

@@ -19,8 +19,17 @@ import express from "express";
 import cors from "cors";
 
 const PORT = process.env.PORT || 4000;
-const GROUND_STATION_URL = process.env.GROUND_STATION_URL || "http://localhost:3001";
+const GROUND_STATION_URL = normalizeUrl(process.env.GROUND_STATION_URL, "http://localhost:3001");
 const STATIONS = ["nasa", "esa", "jaxa"];
+
+// Accept the ground station URL with or without a scheme. A bare host like
+// "stations.example.com" becomes "https://stations.example.com", while an
+// explicit "http://ground-station-api:3001" is left untouched.
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
 
 const app = express();
 app.use(cors());

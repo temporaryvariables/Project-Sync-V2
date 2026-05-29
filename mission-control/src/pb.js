@@ -1,6 +1,14 @@
 import PocketBase from "pocketbase";
 
-const url = import.meta.env.VITE_POCKETBASE_URL || "http://localhost:8090";
+// Accept the PocketBase URL with or without a scheme. A bare host like
+// "auth.example.com" becomes "https://auth.example.com".
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
+
+const url = normalizeUrl(import.meta.env.VITE_POCKETBASE_URL, "http://localhost:8090");
 
 // PocketBase persists the auth token in localStorage automatically, so the
 // session survives a page refresh.

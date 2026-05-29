@@ -16,8 +16,18 @@ import cors from "cors";
 import pg from "pg";
 
 const PORT = process.env.PORT || 3001;
-const POCKETBASE_URL = process.env.POCKETBASE_URL || "http://localhost:8090";
+const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
 const STATIONS = ["nasa", "esa", "jaxa"];
+
+// Accept service URLs with or without a scheme. A bare host like
+// "auth.example.com" becomes "https://auth.example.com", while explicit
+// internal URLs like "http://pocketbase:8090" are left untouched. Not used for
+// the database connection string.
+function normalizeUrl(value, fallback) {
+  const v = (value || fallback || "").trim();
+  if (!v) return v;
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
 
 // Safety net: the dev only auth bypass must never run in production. Real
 // protection is simply not setting AUTH_BYPASS; this guard makes a mistake fatal.
