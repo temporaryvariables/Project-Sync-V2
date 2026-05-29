@@ -19,6 +19,12 @@ const PORT = process.env.PORT || 3003;
 const POCKETBASE_URL = process.env.POCKETBASE_URL || "http://localhost:8090";
 const GROUND_STATION_URL = process.env.GROUND_STATION_URL || "http://localhost:3001";
 
+// Safety net: the dev only auth bypass must never run in production.
+if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production") {
+  console.error("FATAL: AUTH_BYPASS must not be enabled when NODE_ENV=production");
+  process.exit(1);
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -101,6 +107,15 @@ function getRun(teamId) {
 async function authenticate(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  // Local development bypass (see ground-station-api for details). The token is
+  // still forwarded downstream so the same team flows through the relay.
+  if (process.env.AUTH_BYPASS === "true") {
+    req.teamId = token || "local-team";
+    req.bearer = token || "local-team";
+    return next();
+  }
+
   if (!token) return res.status(401).json({ error: "Missing Bearer token" });
   try {
     const r = await fetch(`${POCKETBASE_URL}/api/collections/users/auth-refresh`, {

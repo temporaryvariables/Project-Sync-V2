@@ -19,6 +19,13 @@ const PORT = process.env.PORT || 3001;
 const POCKETBASE_URL = process.env.POCKETBASE_URL || "http://localhost:8090";
 const STATIONS = ["nasa", "esa", "jaxa"];
 
+// Safety net: the dev only auth bypass must never run in production. Real
+// protection is simply not setting AUTH_BYPASS; this guard makes a mistake fatal.
+if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production") {
+  console.error("FATAL: AUTH_BYPASS must not be enabled when NODE_ENV=production");
+  process.exit(1);
+}
+
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 const app = express();
@@ -32,6 +39,17 @@ app.use(express.json());
 async function authenticate(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+
+  // Local development bypass. When AUTH_BYPASS=true the team is taken directly
+  // from the Bearer token string instead of being validated against PocketBase.
+  // This lets the stack run end to end without an auth server. Never enable in
+  // a real deployment.
+  if (process.env.AUTH_BYPASS === "true") {
+    req.teamId = token || "local-team";
+    req.userId = "dev-user";
+    return next();
+  }
+
   if (!token) {
     return res.status(401).json({ error: "Missing Bearer token" });
   }

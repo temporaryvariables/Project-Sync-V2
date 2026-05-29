@@ -1,0 +1,11 @@
+{
+  "name": "project-sync",
+  "version": "1.0.0",
+  "description": "Educational distributed systems platform. Build a relay that keeps three ground stations in sync under chaos.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "pwsh -NoProfile -File ./scripts/run-e2e.ps1",
+    "e2e:test-only": "node ./scripts/e2e-test.mjs"
+  }
+}
