@@ -67,6 +67,12 @@ async function j(url, opts) {
   const sample = recs.body.items[0];
   console.log("  sample:", JSON.stringify({ selector: sample.selector, exp: sample.expected_payload, nasa: sample.nasa_payload, esa: sample.esa_payload, jaxa: sample.jaxa_payload, status: sample.expected_status, sync: sample.data_in_sync }));
   check("sample data_in_sync true", sample.data_in_sync === true);
+  // The relay logs its own story by default (no env var needed): the Deep Space
+  // Network hands it the flight-director URL via X-Flight-Director-Url.
+  await sleep(600); // relay logs are fire-and-forget
+  const relayLogs = await j(`${FD}/logs?limit=400`, { headers: H });
+  check("relay logs on by default", (relayLogs.body.items || []).some((e) => e.service === "rover-relay"),
+    JSON.stringify([...new Set((relayLogs.body.items || []).map((e) => e.service))]));
 
   console.log("\n=== 6. GROUND STATION LIST ENDPOINT ===");
   const list = await j(`${GS}/groundstation/nasa?perPage=5`, { headers: H });

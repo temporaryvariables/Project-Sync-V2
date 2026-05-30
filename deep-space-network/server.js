@@ -200,6 +200,9 @@ async function tick(teamId, token, scenarioKey) {
     "Content-Type": "application/json",
     Authorization: auth,
     "X-Correlation-Id": correlationId,
+    // Tell the relay where Mission Control's logs live so it can add its own
+    // lines to this trace with zero configuration. The relay may ignore this.
+    "X-Flight-Director-Url": FLIGHT_DIRECTOR_URL,
   };
   const trace = []; // collected log events, flushed once at the end of the tick
 
