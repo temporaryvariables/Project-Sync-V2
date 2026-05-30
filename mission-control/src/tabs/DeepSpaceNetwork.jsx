@@ -113,7 +113,16 @@ export default function DeepSpaceNetwork() {
       return;
     }
     setBusy(true);
+    // Clear everything for a clean slate so no data from a previous run lingers.
+    setStatus(null);
+    setRequests([]);
+    setLatencies([]);
+    setRecords([]);
+    setSummary(null);
     try {
+      // Wipe persisted command records for this team (keep chaos rules so the
+      // configured scenario still applies), then start the new transmission.
+      await flightDirector.reset({ keepChaos: true });
       await deepSpaceNetwork.start({ scenario, relayUrl });
       await refresh();
     } catch (e) {

@@ -32,7 +32,8 @@ async function request(base, path, options = {}) {
 
 // --- flight-director-api -----------------------------------------------------
 export const flightDirector = {
-  reset: () => request(FLIGHT_DIRECTOR_URL, "/reset", { method: "POST" }),
+  reset: (opts = {}) =>
+    request(FLIGHT_DIRECTOR_URL, `/reset${opts.keepChaos ? "?keepChaos=true" : ""}`, { method: "POST" }),
   tables: () => request(FLIGHT_DIRECTOR_URL, "/tables"),
   listChaos: () => request(FLIGHT_DIRECTOR_URL, "/chaos"),
   createChaos: (body) => request(FLIGHT_DIRECTOR_URL, "/chaos", { method: "POST", body: JSON.stringify(body) }),

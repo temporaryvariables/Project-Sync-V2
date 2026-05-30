@@ -134,15 +134,23 @@ app.post("/reset", async (req, res) => {
       `DELETE FROM replication_records WHERE team_id = $1`,
       [req.teamId]
     );
-    const chaos = await pool.query(
-      `DELETE FROM chaos_rules WHERE team_id = $1`,
-      [req.teamId]
-    );
+    // When keepChaos is set we only clear the command records (used by the Deep
+    // Space Network "Start" button for a clean slate) and leave chaos rules in
+    // place so the configured scenario still applies.
+    const keepChaos = req.query.keepChaos === "true" || req.body?.keepChaos === true;
+    let chaosDeleted = 0;
+    if (!keepChaos) {
+      const chaos = await pool.query(
+        `DELETE FROM chaos_rules WHERE team_id = $1`,
+        [req.teamId]
+      );
+      chaosDeleted = chaos.rowCount;
+    }
     res.json({
       reset: true,
       team_id: req.teamId,
       records_deleted: records.rowCount,
-      chaos_rules_deleted: chaos.rowCount,
+      chaos_rules_deleted: chaosDeleted,
     });
   } catch (err) {
     console.error(err);
