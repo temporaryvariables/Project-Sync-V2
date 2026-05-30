@@ -134,7 +134,7 @@ export default function Guide() {
         <h2>Good luck, commander</h2>
         <p className="muted">
           Start simple. Get a single command landing at all three stations. Then make it resilient: parallel writes,
-          retries with backoff, respect for rate limits, and monotonic sequence numbers. Watch the Team Dashboard to
+          retries with backoff, respect for rate limits, and monotonic sequence numbers. Watch the Deep Space Network to
           see your three sources of truth converge. The stations are waiting.
         </p>
       </div>

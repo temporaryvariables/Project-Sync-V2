@@ -5,14 +5,12 @@ import RelaySettings from "./components/RelaySettings";
 import Guide from "./tabs/Guide";
 import ApiReference from "./tabs/ApiReference";
 import DeepSpaceNetwork from "./tabs/DeepSpaceNetwork";
-import TeamDashboard from "./tabs/TeamDashboard";
 import Admin from "./tabs/Admin";
 
 const TABS = [
   { key: "guide", label: "Guide", Component: Guide },
   { key: "api", label: "API Reference", Component: ApiReference },
   { key: "dsn", label: "Deep Space Network", Component: DeepSpaceNetwork },
-  { key: "dashboard", label: "Team Dashboard", Component: TeamDashboard },
   { key: "admin", label: "Admin", Component: Admin },
 ];
 
