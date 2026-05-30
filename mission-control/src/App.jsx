@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { pb, currentUser, logout } from "./pb";
+import { pb, currentUser, logout, role } from "./pb";
 import Login from "./components/Login";
 import RelaySettings from "./components/RelaySettings";
 import Guide from "./tabs/Guide";
@@ -14,6 +14,14 @@ const TABS = [
   { key: "admin", label: "Admin", Component: Admin },
 ];
 
+// Which tabs each role is allowed to see. Guide and API Reference are always
+// available; the Deep Space Network and Admin tabs are gated by role.
+const ROLE_TABS = {
+  admin: ["guide", "api", "dsn", "admin"],
+  run: ["guide", "api", "dsn"],
+  read: ["guide", "api"],
+};
+
 export default function App() {
   const [authed, setAuthed] = useState(pb.authStore.isValid);
   const [tab, setTab] = useState("guide");
@@ -23,7 +31,11 @@ export default function App() {
   }
 
   const user = currentUser();
-  const Active = TABS.find((t) => t.key === tab).Component;
+  const allowed = ROLE_TABS[role()] || ROLE_TABS.read;
+  const tabs = TABS.filter((t) => allowed.includes(t.key));
+  // If the current tab isn't allowed for this role, fall back to the first one.
+  const activeKey = allowed.includes(tab) ? tab : tabs[0].key;
+  const Active = TABS.find((t) => t.key === activeKey).Component;
 
   return (
     <div className="app">
@@ -55,10 +67,10 @@ export default function App() {
       </header>
 
       <nav className="tabs">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
-            className={`tab ${tab === t.key ? "active" : ""}`}
+            className={`tab ${activeKey === t.key ? "active" : ""}`}
             onClick={() => setTab(t.key)}
           >
             {t.label}

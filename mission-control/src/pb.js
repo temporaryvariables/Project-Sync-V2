@@ -23,6 +23,17 @@ export function teamId() {
   return u ? u.team_id : null;
 }
 
+// The user's role controls which tabs are available:
+//   "admin" — full access (no tabs locked)
+//   "run"   — can use the Deep Space Network, but not Admin
+//   "read"  — read-only: both Deep Space Network and Admin are locked
+// Defaults to "read" (most restrictive) if the metadata is missing.
+export function role() {
+  const u = currentUser();
+  const r = (u && u.role ? String(u.role) : "read").toLowerCase();
+  return ["admin", "run", "read"].includes(r) ? r : "read";
+}
+
 export function token() {
   return pb.authStore.token;
 }
