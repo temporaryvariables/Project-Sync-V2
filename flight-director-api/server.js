@@ -34,6 +34,14 @@ if (process.env.AUTH_BYPASS === "true" && process.env.NODE_ENV === "production")
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
+// Logs live in their OWN, separate Postgres database so request tracing never
+// competes with or pollutes the primary records database. Configure it with
+// LOGS_DATABASE_URL. If it is not set we fall back to the primary DATABASE_URL
+// so local development still works with a single database.
+const logsPool = new pg.Pool({
+  connectionString: process.env.LOGS_DATABASE_URL || process.env.DATABASE_URL,
+});
+
 // Database schema, kept in sync with postgres/init.sql. Every statement is
 // idempotent (IF NOT EXISTS), so running it is safe on every reset: on a fresh
 // database it creates the tables, and afterwards it is a harmless no op. This
@@ -62,6 +70,8 @@ CREATE TABLE IF NOT EXISTS replication_records (
 ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS nasa_seq BIGINT;
 ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS esa_seq BIGINT;
 ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS jaxa_seq BIGINT;
+-- Links a command record to the most recent end to end trace for that command.
+ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS correlation_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_replication_records_team
     ON replication_records (team_id);
 CREATE INDEX IF NOT EXISTS idx_replication_records_team_updated
@@ -84,6 +94,57 @@ CREATE INDEX IF NOT EXISTS idx_chaos_rules_enabled
 // Creates the schema if it does not exist yet. Safe to call repeatedly.
 async function ensureSchema() {
   await pool.query(SCHEMA_SQL);
+}
+
+// Schema for the SEPARATE logs database. One row per step of a command's end to
+// end journey, tied together by a correlation_id. Every statement is idempotent
+// so it is safe to run on boot and on every reset.
+const LOGS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS request_logs (
+    id              BIGSERIAL PRIMARY KEY,
+    team_id         TEXT        NOT NULL,
+    correlation_id  TEXT        NOT NULL,
+    ts              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    service         TEXT        NOT NULL,
+    level           TEXT        NOT NULL DEFAULT 'info',
+    step            TEXT        NOT NULL,
+    selector        TEXT,
+    station         TEXT,
+    http_status     INT,
+    latency_ms      INT,
+    message         TEXT,
+    meta            JSONB       NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_request_logs_team_corr
+    ON request_logs (team_id, correlation_id);
+CREATE INDEX IF NOT EXISTS idx_request_logs_team_ts
+    ON request_logs (team_id, ts DESC);
+`;
+
+// Creates the logs schema in the separate logs database. Safe to call repeatedly.
+async function ensureLogsSchema() {
+  await logsPool.query(LOGS_SCHEMA_SQL);
+}
+
+// Keeps the logs table small: trims a team's logs to the most recent N rows.
+// Called best effort after ingest so the table never grows unbounded.
+const LOGS_RETENTION_PER_TEAM = 2000;
+async function trimTeamLogs(teamId) {
+  try {
+    await logsPool.query(
+      `DELETE FROM request_logs
+         WHERE team_id = $1
+           AND id NOT IN (
+             SELECT id FROM request_logs
+              WHERE team_id = $1
+              ORDER BY id DESC
+              LIMIT $2
+           )`,
+      [teamId, LOGS_RETENTION_PER_TEAM]
+    );
+  } catch (err) {
+    console.error("log trim failed:", err.message);
+  }
 }
 
 const app = express();
@@ -130,10 +191,23 @@ app.use(authenticate);
 app.post("/reset", async (req, res) => {
   try {
     await ensureSchema();
+    await ensureLogsSchema();
     const records = await pool.query(
       `DELETE FROM replication_records WHERE team_id = $1`,
       [req.teamId]
     );
+    // Always clear this team's request logs on reset so traces never bleed
+    // across runs (the Start button calls reset for a clean slate).
+    let logsDeleted = 0;
+    try {
+      const logs = await logsPool.query(
+        `DELETE FROM request_logs WHERE team_id = $1`,
+        [req.teamId]
+      );
+      logsDeleted = logs.rowCount;
+    } catch (err) {
+      console.error("log reset failed:", err.message);
+    }
     // When keepChaos is set we only clear the command records (used by the Deep
     // Space Network "Start" button for a clean slate) and leave chaos rules in
     // place so the configured scenario still applies.
@@ -151,6 +225,7 @@ app.post("/reset", async (req, res) => {
       team_id: req.teamId,
       records_deleted: records.rowCount,
       chaos_rules_deleted: chaosDeleted,
+      logs_deleted: logsDeleted,
     });
   } catch (err) {
     console.error(err);
@@ -301,6 +376,145 @@ app.get("/teams/:teamId/records", async (req, res) => {
   }
 });
 
+// --- Request logs (separate logs database) -----------------------------------
+// One row per step of a command's end to end journey. Every read and write is
+// scoped to the team derived from the token, so a team can ONLY ever see or
+// write its own logs.
+const LOG_LEVELS = ["info", "warn", "error"];
+
+function sanitizeEvent(ev, teamId) {
+  if (!ev || typeof ev !== "object") return null;
+  const correlation_id = String(ev.correlation_id || "").slice(0, 120);
+  const service = String(ev.service || "").slice(0, 60);
+  const step = String(ev.step || "").slice(0, 80);
+  if (!correlation_id || !service || !step) return null;
+  const level = LOG_LEVELS.includes(ev.level) ? ev.level : "info";
+  const toIntOrNull = (v) => (v === null || v === undefined || v === "" ? null : Number.parseInt(v, 10));
+  return {
+    team_id: teamId,
+    correlation_id,
+    ts: ev.ts ? new Date(ev.ts) : new Date(),
+    service,
+    level,
+    step,
+    selector: ev.selector ? String(ev.selector).slice(0, 200) : null,
+    station: ev.station ? String(ev.station).slice(0, 20) : null,
+    http_status: Number.isFinite(toIntOrNull(ev.http_status)) ? toIntOrNull(ev.http_status) : null,
+    latency_ms: Number.isFinite(toIntOrNull(ev.latency_ms)) ? toIntOrNull(ev.latency_ms) : null,
+    message: ev.message ? String(ev.message).slice(0, 1000) : null,
+    meta: ev.meta && typeof ev.meta === "object" ? ev.meta : {},
+  };
+}
+
+// Ingest one or many log events. Accepts { events: [...] } or a single event
+// object. The team is taken from the token, never from the body.
+app.post("/logs", async (req, res) => {
+  try {
+    await ensureLogsSchema();
+    const raw = Array.isArray(req.body?.events) ? req.body.events : [req.body];
+    const events = raw.map((e) => sanitizeEvent(e, req.teamId)).filter(Boolean).slice(0, 100);
+    if (events.length === 0) return res.status(400).json({ error: "No valid log events" });
+
+    // Build a single multi row insert.
+    const cols = [
+      "team_id", "correlation_id", "ts", "service", "level",
+      "step", "selector", "station", "http_status", "latency_ms", "message", "meta",
+    ];
+    const values = [];
+    const placeholders = events.map((ev, i) => {
+      const base = i * cols.length;
+      values.push(
+        ev.team_id, ev.correlation_id, ev.ts, ev.service, ev.level,
+        ev.step, ev.selector, ev.station, ev.http_status, ev.latency_ms, ev.message, ev.meta
+      );
+      return `(${cols.map((_, c) => `$${base + c + 1}`).join(",")})`;
+    });
+    await logsPool.query(
+      `INSERT INTO request_logs (${cols.join(",")}) VALUES ${placeholders.join(",")}`,
+      values
+    );
+    trimTeamLogs(req.teamId); // best effort, not awaited
+    res.status(201).json({ ingested: events.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// Recent logs for this team, newest first. Optional filters: level, selector,
+// correlationId, since (ISO timestamp).
+app.get("/logs", async (req, res) => {
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit) || 200));
+  const filters = ["team_id = $1"];
+  const params = [req.teamId];
+  if (req.query.level && LOG_LEVELS.includes(req.query.level)) {
+    params.push(req.query.level);
+    filters.push(`level = $${params.length}`);
+  }
+  if (req.query.selector) {
+    params.push(String(req.query.selector));
+    filters.push(`selector = $${params.length}`);
+  }
+  if (req.query.correlationId) {
+    params.push(String(req.query.correlationId));
+    filters.push(`correlation_id = $${params.length}`);
+  }
+  if (req.query.since) {
+    params.push(new Date(req.query.since));
+    filters.push(`ts >= $${params.length}`);
+  }
+  params.push(limit);
+  try {
+    await ensureLogsSchema();
+    const { rows } = await logsPool.query(
+      `SELECT * FROM request_logs
+         WHERE ${filters.join(" AND ")}
+         ORDER BY ts DESC, id DESC
+         LIMIT $${params.length}`,
+      params
+    );
+    res.json({ team_id: req.teamId, count: rows.length, items: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// Full ordered trace for a single command (chronological).
+app.get("/logs/:correlationId", async (req, res) => {
+  try {
+    await ensureLogsSchema();
+    const { rows } = await logsPool.query(
+      `SELECT * FROM request_logs
+         WHERE team_id = $1 AND correlation_id = $2
+         ORDER BY ts ASC, id ASC`,
+      [req.teamId, req.params.correlationId]
+    );
+    res.json({
+      team_id: req.teamId,
+      correlation_id: req.params.correlationId,
+      count: rows.length,
+      items: rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// Explicit logs reset for this team (init + wipe). The schema is created if the
+// logs database is brand new, then the team's rows are removed.
+app.post("/logs/reset", async (req, res) => {
+  try {
+    await ensureLogsSchema();
+    const r = await logsPool.query(`DELETE FROM request_logs WHERE team_id = $1`, [req.teamId]);
+    res.json({ reset: true, team_id: req.teamId, logs_deleted: r.rowCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`flight-director-api listening on ${PORT}`);
   // Best effort: make sure the tables exist as soon as the service is up, so a
@@ -309,4 +523,7 @@ app.listen(PORT, () => {
   ensureSchema()
     .then(() => console.log("schema ready"))
     .catch((err) => console.error("schema init on boot failed (will retry on /reset):", err.message));
+  ensureLogsSchema()
+    .then(() => console.log("logs schema ready"))
+    .catch((err) => console.error("logs schema init on boot failed (will retry on /reset):", err.message));
 });

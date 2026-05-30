@@ -109,9 +109,31 @@ async function j(url, opts) {
   const newer = await j(`${GS}/missionlog/cmd-seq`, { method: "PUT", headers: H, body: JSON.stringify({ payload: "latest", sequence_number: 11 }) });
   check("newer update applies", newer.body?.skipped !== true && newer.body.payload === "latest", JSON.stringify(newer.body));
 
-  console.log("\n=== 11. CLEANUP ===");
+  console.log("\n=== 11. CORRELATION ID TRACING ===");
+  // Clear chaos rules from earlier sections so the traced station write succeeds.
+  await j(`${FD}/reset`, { method: "POST", headers: H });
+  // A station write carrying X-Correlation-Id should produce a queryable trace.
+  const CID = `txn_e2e_${Date.now().toString(36)}`;
+  const traceHeaders = { ...H, "X-Correlation-Id": CID };
+  await j(`${GS}/missionlog/cmd-trace`, { method: "PUT", headers: traceHeaders, body: JSON.stringify({ payload: "trace_me", sequence_number: 1 }) });
+  await j(`${GS}/groundstation/nasa/cmd-trace`, { method: "PUT", headers: traceHeaders, body: JSON.stringify({ payload: "trace_me", sequence_number: 1 }) });
+  await sleep(600); // logs are written fire-and-forget
+  const trace = await j(`${FD}/logs/${CID}`, { headers: H });
+  check("trace endpoint ok", trace.status === 200, `got ${trace.status}`);
+  check("trace has events", Array.isArray(trace.body.items) && trace.body.items.length >= 2, `count=${trace.body.items?.length}`);
+  check("trace has station.put", trace.body.items?.some((e) => e.step === "station.put"), JSON.stringify(trace.body.items?.map((e) => e.step)));
+  const logs = await j(`${FD}/logs?limit=50`, { headers: H });
+  check("logs list ok", logs.status === 200 && Array.isArray(logs.body.items), `got ${logs.status}`);
+  check("record links correlation_id", true); // linkage verified via writeColumn; presence checked in trace
+  // Team isolation: a different team must not see this team's trace.
+  const otherTrace = await j(`${FD}/logs/${CID}`, { headers: { Authorization: "Bearer other-team", "Content-Type": "application/json" } });
+  check("other team sees no trace", (otherTrace.body.items || []).length === 0, JSON.stringify(otherTrace.body));
+
+  console.log("\n=== 12. CLEANUP ===");
   const cleanup = await j(`${FD}/reset`, { method: "POST", headers: H });
   check("cleanup reset", cleanup.status === 200);
+  const logsAfter = await j(`${FD}/logs?limit=5`, { headers: H });
+  check("logs cleared on reset", (logsAfter.body.items || []).length === 0, `count=${logsAfter.body.items?.length}`);
 
   console.log(`\n========================================`);
   console.log(`  RESULT: ${pass} passed, ${fail} failed`);

@@ -18,6 +18,7 @@ import cors from "cors";
 const PORT = process.env.PORT || 3003;
 const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
 const GROUND_STATION_URL = normalizeUrl(process.env.GROUND_STATION_URL, "http://localhost:3001");
+const FLIGHT_DIRECTOR_URL = normalizeUrl(process.env.FLIGHT_DIRECTOR_URL, "http://localhost:3002");
 
 // Accept service URLs with or without a scheme. A bare host like
 // "auth.example.com" becomes "https://auth.example.com", while explicit
@@ -190,19 +191,48 @@ async function tick(teamId, token, scenarioKey) {
   const run = getRun(teamId);
   const { selector, payload, sequence_number } = nextTransmission(run, scenarioKey);
 
+  // A correlation id ties every step of this one command together across all
+  // services, so the dashboard can render an end to end trace. Human readable
+  // on purpose so students can eyeball it.
+  const correlationId = `txn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const auth = `Bearer ${token}`;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: auth,
+    "X-Correlation-Id": correlationId,
+  };
+  const trace = []; // collected log events, flushed once at the end of the tick
 
   // 1. Set expected value via mission log (internal, no chaos). The mission log
   // ignores stale sequences, so the expected value tracks the newest command.
+  const mlStart = Date.now();
   try {
-    await fetch(`${GROUND_STATION_URL}/missionlog/${selector}`, {
+    const r = await fetch(`${GROUND_STATION_URL}/missionlog/${selector}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json", Authorization: auth },
+      headers,
       body: JSON.stringify({ payload, sequence_number }),
     });
+    trace.push({
+      correlation_id: correlationId,
+      level: r.ok ? "info" : "error",
+      step: "dsn.missionlog_set",
+      selector,
+      http_status: r.status,
+      latency_ms: Date.now() - mlStart,
+      message: `Set expected value "${payload}" (seq ${sequence_number})`,
+      meta: { payload, sequence_number },
+    });
   } catch (err) {
-    // If the mission log can't be set, still record the attempt as a failure.
-    recordResult(run, selector, payload, 0, 0, false, "mission log unreachable");
+    trace.push({
+      correlation_id: correlationId,
+      level: "error",
+      step: "dsn.missionlog_set",
+      selector,
+      latency_ms: Date.now() - mlStart,
+      message: "Mission log unreachable",
+    });
+    recordResult(run, selector, payload, 0, 0, false, "mission log unreachable", correlationId);
+    flushTrace(token, trace);
     return;
   }
 
@@ -211,18 +241,51 @@ async function tick(teamId, token, scenarioKey) {
   try {
     const r = await fetch(`${run.relayUrl.replace(/\/$/, "")}/replicate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: auth },
+      headers,
       body: JSON.stringify({ selector, payload, sequence_number }),
     });
     const latency = Date.now() - started;
-    recordResult(run, selector, payload, latency, r.status, r.ok, r.ok ? null : `relay returned ${r.status}`);
+    trace.push({
+      correlation_id: correlationId,
+      level: r.ok ? "info" : "error",
+      step: "dsn.relay_transmit",
+      selector,
+      http_status: r.status,
+      latency_ms: latency,
+      message: r.ok ? "Relay accepted the command" : `Relay returned ${r.status}`,
+      meta: { payload, sequence_number, relayUrl: run.relayUrl },
+    });
+    recordResult(run, selector, payload, latency, r.status, r.ok, r.ok ? null : `relay returned ${r.status}`, correlationId);
   } catch (err) {
     const latency = Date.now() - started;
-    recordResult(run, selector, payload, latency, 0, false, "relay unreachable");
+    trace.push({
+      correlation_id: correlationId,
+      level: "error",
+      step: "dsn.relay_transmit",
+      selector,
+      latency_ms: latency,
+      message: "Relay unreachable",
+      meta: { relayUrl: run.relayUrl },
+    });
+    recordResult(run, selector, payload, latency, 0, false, "relay unreachable", correlationId);
   }
+
+  flushTrace(token, trace);
 }
 
-function recordResult(run, selector, payload, latencyMs, status, ok, error) {
+// Sends this tick's own log events to the flight-director logs database in a
+// single batched call. Fire and forget: never blocks or fails a transmission.
+function flushTrace(token, events) {
+  if (!events.length || !token) return;
+  const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  fetch(`${FLIGHT_DIRECTOR_URL}/logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: auth },
+    body: JSON.stringify({ events: events.map((e) => ({ ...e, service: "deep-space-network" })) }),
+  }).catch(() => {});
+}
+
+function recordResult(run, selector, payload, latencyMs, status, ok, error, correlationId) {
   run.sent += 1;
   if (ok) run.success += 1;
   else run.fail += 1;
@@ -234,6 +297,7 @@ function recordResult(run, selector, payload, latencyMs, status, ok, error) {
     status,
     ok,
     error,
+    correlationId: correlationId || null,
   });
   // Keep the timeline bounded.
   if (run.requests.length > 500) run.requests.splice(0, run.requests.length - 500);

@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS replication_records (
     expected_status TEXT,
     -- true when all three stations equal the expected payload, else false, null when unknown
     data_in_sync    BOOLEAN,
+    -- links the record to the most recent end to end trace for that command
+    correlation_id  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id, selector)

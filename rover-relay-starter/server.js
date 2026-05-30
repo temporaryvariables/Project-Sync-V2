@@ -48,12 +48,22 @@ app.post("/replicate", async (req, res) => {
   // straight through to the ground station API.
   const auth = req.headers.authorization || "";
 
+  // Propagate the trace context. The X-Correlation-Id header ties every hop of
+  // this command together so the dashboard can show one end to end trace.
+  // Forwarding it is good distributed-systems hygiene; keep doing it as you
+  // make this relay resilient.
+  const correlationId = req.headers["x-correlation-id"] || "";
+
   const results = {};
   for (const station of STATIONS) {
     try {
       const r = await fetch(`${GROUND_STATION_URL}/groundstation/${station}/${selector}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: auth },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: auth,
+          ...(correlationId ? { "X-Correlation-Id": correlationId } : {}),
+        },
         body: JSON.stringify({ payload, sequence_number }),
       });
       results[station] = r.status;

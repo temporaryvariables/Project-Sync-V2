@@ -40,6 +40,15 @@ export const flightDirector = {
   updateChaos: (id, body) => request(FLIGHT_DIRECTOR_URL, `/chaos/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteChaos: (id) => request(FLIGHT_DIRECTOR_URL, `/chaos/${id}`, { method: "DELETE" }),
   teamRecords: (teamId, limit = 100) => request(FLIGHT_DIRECTOR_URL, `/teams/${teamId}/records?limit=${limit}`),
+  logs: (opts = {}) => {
+    const q = new URLSearchParams();
+    if (opts.limit) q.set("limit", opts.limit);
+    if (opts.level) q.set("level", opts.level);
+    if (opts.selector) q.set("selector", opts.selector);
+    const qs = q.toString();
+    return request(FLIGHT_DIRECTOR_URL, `/logs${qs ? `?${qs}` : ""}`);
+  },
+  trace: (correlationId) => request(FLIGHT_DIRECTOR_URL, `/logs/${encodeURIComponent(correlationId)}`),
 };
 
 // --- ground-station-api ------------------------------------------------------

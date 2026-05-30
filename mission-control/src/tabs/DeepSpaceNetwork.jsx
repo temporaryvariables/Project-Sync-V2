@@ -15,6 +15,7 @@ import {
 import { flightDirector, deepSpaceNetwork } from "../api";
 import { teamId } from "../pb";
 import { useRelayUrl } from "../settings";
+import TraceDrawer from "../components/TraceDrawer";
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -60,6 +61,9 @@ export default function DeepSpaceNetwork() {
   const [records, setRecords] = useState([]);
   const [summary, setSummary] = useState(null);
   const [latencies, setLatencies] = useState([]);
+
+  // trace drawer
+  const [traceId, setTraceId] = useState(null);
 
   useEffect(() => {
     deepSpaceNetwork
@@ -228,6 +232,7 @@ export default function DeepSpaceNetwork() {
                   <th>Payload</th>
                   <th>Latency</th>
                   <th>Status</th>
+                  <th>Trace</th>
                 </tr>
               </thead>
               <tbody>
@@ -239,6 +244,15 @@ export default function DeepSpaceNetwork() {
                     <td>{r.latencyMs} ms</td>
                     <td className={r.ok ? "status-full" : "status-none"}>
                       {r.status || "—"} {r.error ? `(${r.error})` : ""}
+                    </td>
+                    <td>
+                      {r.correlationId ? (
+                        <button className="btn ghost sm" onClick={() => setTraceId(r.correlationId)}>
+                          View trace
+                        </button>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -295,6 +309,7 @@ export default function DeepSpaceNetwork() {
         <h2>Commands</h2>
         <p className="muted" style={{ fontSize: 13 }}>
           Each row shows the expected value from the mission log and what landed at each station.
+          Click a row's trace to see its end to end journey.
         </p>
         {records.length === 0 ? (
           <p className="muted">No commands yet.</p>
@@ -310,6 +325,7 @@ export default function DeepSpaceNetwork() {
                   <th>JAXA</th>
                   <th>Seq</th>
                   <th>Status</th>
+                  <th>Trace</th>
                 </tr>
               </thead>
               <tbody>
@@ -336,6 +352,15 @@ export default function DeepSpaceNetwork() {
                         {STATUS_LABELS[r.expected_status] || "Pending"}
                       </span>
                     </td>
+                    <td>
+                      {r.correlation_id ? (
+                        <button className="btn ghost sm" onClick={() => setTraceId(r.correlation_id)}>
+                          View
+                        </button>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -343,6 +368,8 @@ export default function DeepSpaceNetwork() {
           </div>
         )}
       </div>
+
+      {traceId && <TraceDrawer correlationId={traceId} onClose={() => setTraceId(null)} />}
     </div>
   );
 }

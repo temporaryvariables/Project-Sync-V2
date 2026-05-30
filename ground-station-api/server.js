@@ -17,6 +17,7 @@ import pg from "pg";
 
 const PORT = process.env.PORT || 3001;
 const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
+const FLIGHT_DIRECTOR_URL = normalizeUrl(process.env.FLIGHT_DIRECTOR_URL, "http://localhost:3002");
 const STATIONS = ["nasa", "esa", "jaxa"];
 
 // Accept service URLs with or without a scheme. A bare host like
@@ -41,6 +42,22 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Fire and forget structured logging to the flight-director logs database. The
+// caller's token (forwarded all the way from the Deep Space Network) is reused
+// so the log is attributed to the correct team. Never blocks or fails the real
+// request: any error is swallowed. A missing correlation id means this write
+// was not part of a traced command, so we skip logging.
+function logEvent(token, event) {
+  const correlationId = event.correlation_id;
+  if (!correlationId || !token) return;
+  const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  fetch(`${FLIGHT_DIRECTOR_URL}/logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: auth },
+    body: JSON.stringify({ ...event, service: "ground-station-api" }),
+  }).catch(() => {});
+}
 
 // -----------------------------------------------------------------------------
 // Auth: validate the Bearer token against PocketBase and derive team_id.
@@ -117,6 +134,7 @@ async function applyChaos(teamId, station, rules) {
     if (rule.mode === "blackout") {
       return {
         status: 500,
+        mode: "blackout",
         body: { error: `Station ${station.toUpperCase()} blackout. No signal.` },
       };
     }
@@ -135,6 +153,7 @@ async function applyChaos(teamId, station, rules) {
       if (bucket.count > limit) {
         return {
           status: 429,
+          mode: "throttle",
           headers: { "Retry-After": Math.ceil(retryAfterMs / 1000) },
           body: {
             error: `Bandwidth throttle on ${station.toUpperCase()}.`,
@@ -239,11 +258,16 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
       esa_seq: null,
       jaxa_seq: null,
       if_match: null,
+      correlation_id: null,
     };
     const merged = {
       ...base,
       [column]: payload,
       if_match: extra.if_match !== undefined ? extra.if_match : base.if_match,
+      correlation_id:
+        extra.correlation_id !== undefined && extra.correlation_id !== null
+          ? extra.correlation_id
+          : base.correlation_id,
     };
 
     if (column === "expected_payload") {
@@ -262,8 +286,9 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
          (team_id, selector, nasa_payload, esa_payload, jaxa_payload,
           expected_payload, sequence_number, if_match,
           nasa_seq, esa_seq, jaxa_seq,
+          correlation_id,
           expected_status, data_in_sync, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())
        ON CONFLICT (team_id, selector) DO UPDATE SET
          nasa_payload = EXCLUDED.nasa_payload,
          esa_payload = EXCLUDED.esa_payload,
@@ -274,6 +299,7 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
          nasa_seq = EXCLUDED.nasa_seq,
          esa_seq = EXCLUDED.esa_seq,
          jaxa_seq = EXCLUDED.jaxa_seq,
+         correlation_id = EXCLUDED.correlation_id,
          expected_status = EXCLUDED.expected_status,
          data_in_sync = EXCLUDED.data_in_sync,
          updated_at = now()
@@ -290,6 +316,7 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
         merged.nasa_seq,
         merged.esa_seq,
         merged.jaxa_seq,
+        merged.correlation_id,
         status.expected_status,
         status.data_in_sync,
       ]
@@ -373,18 +400,72 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
   const { payload, sequence_number, if_match } = req.body || {};
   if (payload === undefined) return res.status(400).json({ error: "payload is required" });
 
+  const cid = req.headers["x-correlation-id"] || null;
+  const token = req.headers.authorization || "";
+  const selector = req.params.selector;
+  const started = Date.now();
+
   try {
     const rules = await activeRules(req.teamId, station);
     const chaos = await applyChaos(req.teamId, station, rules);
-    if (chaos) return res.status(chaos.status).set(chaos.headers || {}).json(chaos.body);
+    if (chaos) {
+      logEvent(token, {
+        correlation_id: cid,
+        level: chaos.status >= 500 ? "error" : "warn",
+        step: `station.${chaos.mode || "chaos"}`,
+        selector,
+        station,
+        http_status: chaos.status,
+        latency_ms: Date.now() - started,
+        message: chaos.body?.error || `Chaos (${chaos.mode}) on ${station.toUpperCase()}`,
+        meta: {
+          mode: chaos.mode,
+          ...(chaos.body?.retry_after_ms ? { retry_after_ms: chaos.body.retry_after_ms } : {}),
+        },
+      });
+      return res.status(chaos.status).set(chaos.headers || {}).json(chaos.body);
+    }
 
     const existing = await loadRow(pool, req.teamId, req.params.selector);
     const reject = orderingRejection(rules, sequence_number ?? null, existing?.[`${station}_seq`] ?? null);
-    if (reject) return res.status(reject.status).json(reject.body);
+    if (reject) {
+      logEvent(token, {
+        correlation_id: cid,
+        level: "warn",
+        step: "station.ordering_rejected",
+        selector,
+        station,
+        http_status: reject.status,
+        latency_ms: Date.now() - started,
+        message: reject.body?.error,
+        meta: {
+          sequence_number: sequence_number ?? null,
+          current_sequence_number: reject.body?.current_sequence_number ?? null,
+        },
+      });
+      return res.status(reject.status).json(reject.body);
+    }
 
     const row = await writeColumn(req.teamId, req.params.selector, `${station}_payload`, payload, {
       sequence_number: sequence_number ?? existing?.[`${station}_seq`] ?? null,
       if_match: if_match ?? existing?.if_match ?? null,
+      correlation_id: cid,
+    });
+    logEvent(token, {
+      correlation_id: cid,
+      level: "info",
+      step: "station.put",
+      selector,
+      station,
+      http_status: 200,
+      latency_ms: Date.now() - started,
+      message: `Wrote "${payload}" to ${station.toUpperCase()}`,
+      meta: {
+        payload,
+        sequence_number: sequence_number ?? null,
+        expected_status: row.expected_status,
+        data_in_sync: row.data_in_sync,
+      },
     });
     res.json({
       selector: row.selector,
@@ -432,6 +513,10 @@ app.get("/missionlog/:selector", async (req, res) => {
 app.put("/missionlog/:selector", async (req, res) => {
   const { payload, sequence_number, if_match } = req.body || {};
   if (payload === undefined) return res.status(400).json({ error: "payload is required" });
+  const cid = req.headers["x-correlation-id"] || null;
+  const token = req.headers.authorization || "";
+  const selector = req.params.selector;
+  const started = Date.now();
   try {
     // The expected value represents the correct final state, which is the
     // payload carrying the HIGHEST sequence number. A stale (lower) sequence
@@ -446,6 +531,16 @@ app.put("/missionlog/:selector", async (req, res) => {
       sequence_number !== undefined &&
       sequence_number < existing.sequence_number
     ) {
+      logEvent(token, {
+        correlation_id: cid,
+        level: "warn",
+        step: "missionlog.skipped_stale",
+        selector,
+        http_status: 200,
+        latency_ms: Date.now() - started,
+        message: `Stale expected value ignored (seq ${sequence_number} < ${existing.sequence_number})`,
+        meta: { sequence_number, current_sequence_number: existing.sequence_number },
+      });
       return res.json({
         selector: existing.selector,
         payload: existing.expected_payload,
@@ -459,6 +554,17 @@ app.put("/missionlog/:selector", async (req, res) => {
     const row = await writeColumn(req.teamId, req.params.selector, "expected_payload", payload, {
       sequence_number: sequence_number ?? null,
       if_match: if_match ?? null,
+      correlation_id: cid,
+    });
+    logEvent(token, {
+      correlation_id: cid,
+      level: "info",
+      step: "missionlog.put",
+      selector,
+      http_status: 200,
+      latency_ms: Date.now() - started,
+      message: `Expected value set to "${payload}"`,
+      meta: { payload, sequence_number: sequence_number ?? null },
     });
     res.json({
       selector: row.selector,
