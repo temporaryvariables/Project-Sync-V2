@@ -10,7 +10,13 @@ Welcome, engineer. This is your rover relay. Mission Control sends commands here
 { "selector": "cmd-4821", "payload": "fire_thruster", "sequence_number": 12 }
 ```
 
-It then writes that command to each station, one after another:
+Right now this is an **empty scaffold**. It reads the command and the trace
+context (auth token + correlation id), writes a single example log line to
+Mission Control, and returns an empty `200` response. It does **not** talk to the
+stations yet — that part is your job.
+
+Your mission is to forward every command to all three stations so they end up
+holding the same value:
 
 ```
 PUT /groundstation/nasa/cmd-4821
@@ -18,18 +24,21 @@ PUT /groundstation/esa/cmd-4821
 PUT /groundstation/jaxa/cmd-4821
 ```
 
-That is it. No retries, no parallelism, no persistence, no ordering safeguards.
+(forwarding the `Authorization` and `X-Correlation-Id` headers and a
+`{ payload, sequence_number }` body on each). Start simple, then make it survive
+chaos.
 
-## Why it breaks
+## Why it's hard
 
-The ground station API runs chaos scenarios. The starter ignores all of them:
+The ground station API runs chaos scenarios. A naive relay ignores all of them:
 
-| Chaos | What happens to the starter | What you should add |
-|-------|-----------------------------|---------------------|
-| **Station Blackout** (HTTP 500) | The write just fails and is forgotten. | Retry with exponential backoff. Don't drop pending work. |
+| Chaos | What goes wrong | What you should add |
+|-------|-----------------|---------------------|
+| **Station Blackout** (HTTP 500) | The write fails and is forgotten. | Retry with exponential backoff. Don't drop pending work. |
 | **Bandwidth Throttle** (HTTP 429 + `retry_after_ms`) | Treated as a normal failure. | Read `Retry-After`, queue, and pace your traffic. |
 | **Signal Delay** (2 to 5s latency) | Sequential writes stack up and time out. | Write to the three stations in parallel. Set timeouts. |
 | **Incorrect Ordering** (HTTP 409 on stale `sequence_number`) | Old commands overwrite new ones. | Keep sequence numbers monotonic. Use `if_match`. |
+| **Relay Timeout** | Mission Control gives up if you respond too slowly. | Acknowledge quickly; do slow work without blocking the response. |
 
 ## Run it locally
 
