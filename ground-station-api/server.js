@@ -211,6 +211,19 @@ async function loadRow(client, teamId, selector) {
 
 // Upserts a single column (a station payload, or the expected payload from the
 // mission log) and recomputes the synchronization status.
+//
+// Sequence tracking is column specific:
+//  - Writing the expected value (mission log) advances the record level
+//    sequence_number, which represents the expected/target ordering.
+//  - Writing a station payload records that station's own last sequence in its
+//    dedicated column, so a relay can read it back to make ordering decisions
+//    without seeing the expected sequence.
+const STATION_SEQ_COLUMN = {
+  nasa_payload: "nasa_seq",
+  esa_payload: "esa_seq",
+  jaxa_payload: "jaxa_seq",
+};
+
 async function writeColumn(teamId, selector, column, payload, extra = {}) {
   const client = await pool.connect();
   try {
@@ -222,25 +235,35 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
       jaxa_payload: null,
       expected_payload: null,
       sequence_number: null,
+      nasa_seq: null,
+      esa_seq: null,
+      jaxa_seq: null,
       if_match: null,
     };
     const merged = {
       ...base,
       [column]: payload,
-      sequence_number:
-        extra.sequence_number !== undefined
-          ? extra.sequence_number
-          : base.sequence_number,
       if_match: extra.if_match !== undefined ? extra.if_match : base.if_match,
     };
+
+    if (column === "expected_payload") {
+      merged.sequence_number =
+        extra.sequence_number !== undefined ? extra.sequence_number : base.sequence_number;
+    } else if (STATION_SEQ_COLUMN[column]) {
+      const seqCol = STATION_SEQ_COLUMN[column];
+      merged[seqCol] =
+        extra.sequence_number !== undefined ? extra.sequence_number : base[seqCol];
+    }
+
     const status = computeStatus(merged);
 
     const { rows } = await client.query(
       `INSERT INTO replication_records
          (team_id, selector, nasa_payload, esa_payload, jaxa_payload,
           expected_payload, sequence_number, if_match,
+          nasa_seq, esa_seq, jaxa_seq,
           expected_status, data_in_sync, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
        ON CONFLICT (team_id, selector) DO UPDATE SET
          nasa_payload = EXCLUDED.nasa_payload,
          esa_payload = EXCLUDED.esa_payload,
@@ -248,6 +271,9 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
          expected_payload = EXCLUDED.expected_payload,
          sequence_number = EXCLUDED.sequence_number,
          if_match = EXCLUDED.if_match,
+         nasa_seq = EXCLUDED.nasa_seq,
+         esa_seq = EXCLUDED.esa_seq,
+         jaxa_seq = EXCLUDED.jaxa_seq,
          expected_status = EXCLUDED.expected_status,
          data_in_sync = EXCLUDED.data_in_sync,
          updated_at = now()
@@ -261,6 +287,9 @@ async function writeColumn(teamId, selector, column, payload, extra = {}) {
         merged.expected_payload,
         merged.sequence_number,
         merged.if_match,
+        merged.nasa_seq,
+        merged.esa_seq,
+        merged.jaxa_seq,
         status.expected_status,
         status.data_in_sync,
       ]
@@ -306,7 +335,7 @@ app.get("/groundstation/:station", async (req, res) => {
       [req.teamId]
     );
     const { rows } = await pool.query(
-      `SELECT selector, ${col} AS payload, sequence_number, updated_at
+      `SELECT selector, ${col} AS payload, ${station}_seq AS sequence_number, updated_at
          FROM replication_records
          WHERE team_id = $1 AND ${col} IS NOT NULL
          ORDER BY updated_at DESC
@@ -331,7 +360,7 @@ app.get("/groundstation/:station/:selector", async (req, res) => {
     const row = await loadRow(pool, req.teamId, req.params.selector);
     const value = row ? row[`${station}_payload`] : null;
     if (value === null || value === undefined) return res.status(404).json({ error: "Not found" });
-    res.json({ selector: req.params.selector, station, payload: value, sequence_number: row.sequence_number });
+    res.json({ selector: req.params.selector, station, payload: value, sequence_number: row[`${station}_seq`] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal error" });
@@ -350,11 +379,11 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
     if (chaos) return res.status(chaos.status).set(chaos.headers || {}).json(chaos.body);
 
     const existing = await loadRow(pool, req.teamId, req.params.selector);
-    const reject = orderingRejection(rules, sequence_number ?? null, existing?.sequence_number ?? null);
+    const reject = orderingRejection(rules, sequence_number ?? null, existing?.[`${station}_seq`] ?? null);
     if (reject) return res.status(reject.status).json(reject.body);
 
     const row = await writeColumn(req.teamId, req.params.selector, `${station}_payload`, payload, {
-      sequence_number: sequence_number ?? existing?.sequence_number ?? null,
+      sequence_number: sequence_number ?? existing?.[`${station}_seq`] ?? null,
       if_match: if_match ?? existing?.if_match ?? null,
     });
     res.json({
@@ -404,6 +433,29 @@ app.put("/missionlog/:selector", async (req, res) => {
   const { payload, sequence_number, if_match } = req.body || {};
   if (payload === undefined) return res.status(400).json({ error: "payload is required" });
   try {
+    // The expected value represents the correct final state, which is the
+    // payload carrying the HIGHEST sequence number. A stale (lower) sequence
+    // must never overwrite a newer expected value, otherwise out-of-order
+    // delivery would silently move the target and hide ordering bugs.
+    const existing = await loadRow(pool, req.teamId, req.params.selector);
+    if (
+      existing &&
+      existing.sequence_number !== null &&
+      existing.sequence_number !== undefined &&
+      sequence_number !== null &&
+      sequence_number !== undefined &&
+      sequence_number < existing.sequence_number
+    ) {
+      return res.json({
+        selector: existing.selector,
+        payload: existing.expected_payload,
+        sequence_number: existing.sequence_number,
+        expected_status: existing.expected_status,
+        data_in_sync: existing.data_in_sync,
+        skipped: true,
+      });
+    }
+
     const row = await writeColumn(req.teamId, req.params.selector, "expected_payload", payload, {
       sequence_number: sequence_number ?? null,
       if_match: if_match ?? null,

@@ -60,6 +60,42 @@ function randomCommand() {
   return { selector: `cmd-${id}`, payload: action };
 }
 
+// Scrambled orbit reuses a small pool of selectors so out-of-order writes
+// actually collide on the same record. For each selector it emits a NEWER
+// command (high sequence) followed by a STALE command (lower sequence) that
+// arrives afterwards. A naive last-write-wins relay ends up with the stale
+// payload at the stations while the expected value stays pinned to the newer
+// one -> no_match. A relay that respects sequence numbers drops the stale write
+// and stays in sync -> full_match. No chaos rule is required.
+const SCRAMBLE_SELECTORS = ["cmd-7001", "cmd-7002", "cmd-7003", "cmd-7004"];
+
+function nextTransmission(run, scenarioKey) {
+  if (scenarioKey === "scrambled_orbit") {
+    if (!run.scrambleQueue || run.scrambleQueue.length === 0) {
+      run.scrambleIdx = (run.scrambleIdx ?? -1) + 1;
+      const selector = SCRAMBLE_SELECTORS[run.scrambleIdx % SCRAMBLE_SELECTORS.length];
+      run.seq += 2;
+      const high = run.seq; // newer command
+      const low = run.seq - 1; // stale command, transmitted afterwards
+      const newest = COMMANDS[Math.floor(Math.random() * COMMANDS.length)];
+      let stale = COMMANDS[Math.floor(Math.random() * COMMANDS.length)];
+      if (stale === newest) {
+        stale = COMMANDS[(COMMANDS.indexOf(newest) + 1) % COMMANDS.length];
+      }
+      run.scrambleQueue = [
+        { selector, payload: newest, sequence_number: high },
+        { selector, payload: stale, sequence_number: low },
+      ];
+    }
+    return run.scrambleQueue.shift();
+  }
+
+  // Default: a unique selector with a monotonically increasing sequence.
+  run.seq += 1;
+  const { selector, payload } = randomCommand();
+  return { selector, payload, sequence_number: run.seq };
+}
+
 // -----------------------------------------------------------------------------
 // Scenarios. Each describes how many ticks, the gap between them, and an
 // optional twist (burst grouping, ramping interval, or out of order sequence).
@@ -82,7 +118,8 @@ const SCENARIOS = {
   },
   scrambled_orbit: {
     name: "Scrambled Orbit",
-    description: "Sends sequence numbers out of order on purpose. Tests ordering safeguards.",
+    description:
+      "Reuses selectors and delivers a newer command followed by a stale one out of order. A relay that ignores sequence numbers ends up with the wrong value. Tests ordering safeguards.",
     defaults: { intervalMs: 2000, durationMs: 60000 },
   },
 };
@@ -104,6 +141,8 @@ function emptyRun() {
     fail: 0,
     timer: null,
     seq: 0,
+    scrambleQueue: [],
+    scrambleIdx: -1,
     requests: [], // { ts, selector, payload, latencyMs, status, ok, error }
   };
 }
@@ -149,21 +188,12 @@ async function authenticate(req, res, next) {
 // -----------------------------------------------------------------------------
 async function tick(teamId, token, scenarioKey) {
   const run = getRun(teamId);
-  const { selector, payload } = randomCommand();
-
-  // Scrambled orbit deliberately jitters the sequence number around.
-  let sequence_number;
-  if (scenarioKey === "scrambled_orbit") {
-    run.seq += 1;
-    sequence_number = run.seq + Math.floor(Math.random() * 7) - 3; // +/- jitter
-  } else {
-    run.seq += 1;
-    sequence_number = run.seq;
-  }
+  const { selector, payload, sequence_number } = nextTransmission(run, scenarioKey);
 
   const auth = `Bearer ${token}`;
 
-  // 1. Set expected value via mission log (internal, no chaos).
+  // 1. Set expected value via mission log (internal, no chaos). The mission log
+  // ignores stale sequences, so the expected value tracks the newest command.
   try {
     await fetch(`${GROUND_STATION_URL}/missionlog/${selector}`, {
       method: "PUT",

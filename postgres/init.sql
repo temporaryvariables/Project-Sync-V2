@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS replication_records (
     esa_payload     TEXT,
     jaxa_payload    TEXT,
     sequence_number BIGINT,
+    -- per station sequence numbers (the last sequence each station accepted).
+    -- the record level sequence_number above tracks the expected/target order.
+    nasa_seq        BIGINT,
+    esa_seq         BIGINT,
+    jaxa_seq        BIGINT,
     if_match        TEXT,
     -- full_match | partial_match | no_match | null
     expected_status TEXT,

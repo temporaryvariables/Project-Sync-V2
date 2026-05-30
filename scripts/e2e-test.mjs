@@ -96,7 +96,20 @@ async function j(url, opts) {
   const missingSeq = await j(`${GS}/groundstation/esa/cmd-order`, { method: "PUT", headers: H, body: JSON.stringify({ payload: "z" }) });
   check("missing seq rejected 409", missingSeq.status === 409, `got ${missingSeq.status}`);
 
-  console.log("\n=== 10. CLEANUP ===");
+  console.log("\n=== 10. MISSION LOG SEQUENCE AWARENESS ===");
+  // The expected value must track the HIGHEST sequence. A stale (lower) update
+  // must not overwrite a newer one - this is what makes Scrambled Orbit catch a
+  // naive last-write-wins relay.
+  await j(`${GS}/missionlog/cmd-seq`, { method: "PUT", headers: H, body: JSON.stringify({ payload: "newest", sequence_number: 10 }) });
+  const stale = await j(`${GS}/missionlog/cmd-seq`, { method: "PUT", headers: H, body: JSON.stringify({ payload: "stale", sequence_number: 5 }) });
+  check("stale update is skipped", stale.body?.skipped === true, JSON.stringify(stale.body));
+  const after = await j(`${GS}/missionlog/cmd-seq`, { headers: H });
+  check("expected stays newest", after.body.payload === "newest", JSON.stringify(after.body));
+  check("expected sequence stays high", Number(after.body.sequence_number) === 10, `seq=${after.body.sequence_number}`);
+  const newer = await j(`${GS}/missionlog/cmd-seq`, { method: "PUT", headers: H, body: JSON.stringify({ payload: "latest", sequence_number: 11 }) });
+  check("newer update applies", newer.body?.skipped !== true && newer.body.payload === "latest", JSON.stringify(newer.body));
+
+  console.log("\n=== 11. CLEANUP ===");
   const cleanup = await j(`${FD}/reset`, { method: "POST", headers: H });
   check("cleanup reset", cleanup.status === 200);
 

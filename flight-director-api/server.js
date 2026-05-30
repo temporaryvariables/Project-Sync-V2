@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS replication_records (
     esa_payload     TEXT,
     jaxa_payload    TEXT,
     sequence_number BIGINT,
+    nasa_seq        BIGINT,
+    esa_seq         BIGINT,
+    jaxa_seq        BIGINT,
     if_match        TEXT,
     expected_status TEXT,
     data_in_sync    BOOLEAN,
@@ -55,6 +58,10 @@ CREATE TABLE IF NOT EXISTS replication_records (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id, selector)
 );
+-- Migrate older databases that predate the per station sequence columns.
+ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS nasa_seq BIGINT;
+ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS esa_seq BIGINT;
+ALTER TABLE replication_records ADD COLUMN IF NOT EXISTS jaxa_seq BIGINT;
 CREATE INDEX IF NOT EXISTS idx_replication_records_team
     ON replication_records (team_id);
 CREATE INDEX IF NOT EXISTS idx_replication_records_team_updated
