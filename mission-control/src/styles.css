@@ -649,7 +649,7 @@ ul.clean li {
 }
 
 .trace-drawer {
-  width: min(560px, 92vw);
+  width: min(960px, 96vw);
   height: 100%;
   overflow-y: auto;
   padding: 20px;
@@ -801,6 +801,19 @@ ul.clean li {
   word-break: break-all;
 }
 .link-btn:hover { text-decoration: underline; }
+
+/* --- Trace drawer table (Kusto-style) ------------------------------------- */
+.trace-table-wrap { overflow-x: auto; }
+.trace-table { table-layout: fixed; width: 100%; font-size: 12.5px; }
+.trace-table th { white-space: nowrap; }
+.trace-table td { border-left: none; }
+.trace-table tbody tr { border-left: 3px solid transparent; }
+.trace-table tbody tr.trace-info { border-left-color: var(--accent); }
+.trace-table tbody tr.trace-success { border-left-color: var(--green); }
+.trace-table tbody tr.trace-warn { border-left-color: var(--amber); }
+.trace-table tbody tr.trace-error { border-left-color: var(--red); }
+.trace-step-cell { font-family: monospace; font-size: 11.5px; color: var(--muted); word-break: break-all; }
+
 
 
 

@@ -15,6 +15,29 @@ function levelClass(level) {
   return "trace-info";
 }
 
+function levelBadge(level) {
+  if (level === "error") return "log-badge log-error";
+  if (level === "warn") return "log-badge log-warn";
+  if (level === "success") return "log-badge log-success";
+  return "log-badge log-info";
+}
+
+// Compact "key: value" chips for the Properties column, including the common
+// fields that live outside meta (station / http / latency).
+function traceProps(ev) {
+  const entries = [];
+  if (ev.station) entries.push(["station", ev.station.toUpperCase()]);
+  if (ev.http_status != null) entries.push(["http", ev.http_status]);
+  if (ev.latency_ms != null) entries.push(["latency", `${ev.latency_ms} ms`]);
+  if (ev.meta && typeof ev.meta === "object") {
+    for (const [k, v] of Object.entries(ev.meta)) {
+      if (v === null || v === undefined || v === "") continue;
+      entries.push([k, typeof v === "object" ? JSON.stringify(v) : String(v)]);
+    }
+  }
+  return entries;
+}
+
 export default function TraceDrawer({ correlationId, onClose }) {
   const [items, setItems] = useState([]);
   const [error, setError] = useState("");
@@ -70,31 +93,51 @@ export default function TraceDrawer({ correlationId, onClose }) {
           </p>
         )}
 
-        <ol className="trace-list">
-          {items.map((ev) => {
-            const offset = t0 ? new Date(ev.ts).getTime() - t0 : 0;
-            return (
-              <li key={ev.id} className={`trace-item ${levelClass(ev.level)}`}>
-                <div className="trace-item-head">
-                  <span className="trace-service">{SERVICE_LABELS[ev.service] || ev.service}</span>
-                  <span className="trace-step">{ev.step}</span>
-                  {ev.station && <span className="trace-station">{ev.station.toUpperCase()}</span>}
-                  <span className="trace-time muted">+{offset} ms</span>
-                  {ev.http_status != null && (
-                    <span className={`trace-status ${ev.http_status >= 500 ? "status-none" : ev.http_status >= 400 ? "status-partial" : "status-full"}`}>
-                      {ev.http_status}
-                    </span>
-                  )}
-                  {ev.latency_ms != null && <span className="trace-latency muted">{ev.latency_ms} ms</span>}
-                </div>
-                {ev.message && <div className="trace-message">{ev.message}</div>}
-                {ev.meta && Object.keys(ev.meta).length > 0 && (
-                  <code className="trace-meta">{JSON.stringify(ev.meta)}</code>
-                )}
-              </li>
-            );
-          })}
-        </ol>
+        {!loading && !error && items.length > 0 && (
+          <div className="trace-table-wrap">
+            <table className="log-table trace-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 70 }}>+ms</th>
+                  <th style={{ width: 78 }}>Type</th>
+                  <th style={{ width: 66 }}>Source</th>
+                  <th style={{ width: 120 }}>Step</th>
+                  <th>Message</th>
+                  <th style={{ width: 200 }}>Properties</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((ev) => {
+                  const offset = t0 ? new Date(ev.ts).getTime() - t0 : 0;
+                  const props = traceProps(ev);
+                  return (
+                    <tr key={ev.id} className={levelClass(ev.level)}>
+                      <td className="muted log-time">+{offset}</td>
+                      <td><span className={levelBadge(ev.level)}>{ev.level}</span></td>
+                      <td><span className="log-source">{SERVICE_LABELS[ev.service] || ev.service}</span></td>
+                      <td className="trace-step-cell">{ev.step}</td>
+                      <td className="log-msg">{ev.message || <span className="muted">—</span>}</td>
+                      <td>
+                        {props.length === 0 ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <div className="log-props">
+                            {props.map(([k, v]) => (
+                              <span className="log-prop" key={k}>
+                                <span className="log-prop-k">{k}</span>
+                                <span className="log-prop-v">{String(v)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </aside>
     </div>
   );
