@@ -1,4 +1,4 @@
-const STARTER_SNIPPET = `// rover-relay-starter — an empty scaffold. The forwarding is YOUR job.
+const STARTER_SNIPPET = `// Project-Sync-Relay — an empty scaffold. The forwarding is YOUR job.
 app.post("/replicate", async (req, res) => {
   const { selector, payload, sequence_number } = req.body || {};
 
@@ -107,9 +107,18 @@ export default function Guide() {
         <div className="panel">
           <h2>Starter code</h2>
           <p className="muted">
-            You begin with <span className="inline-code">rover-relay-starter</span>. It's an empty scaffold: it
-            acknowledges each command and logs one line, but doesn't talk to the stations yet. Fork it and build
-            the forwarding so all three stay in sync under chaos.
+            You begin with the{" "}
+            <a href="https://github.com/temporaryvariables/Project-Sync-Relay" target="_blank" rel="noreferrer">
+              Project-Sync-Relay
+            </a>{" "}
+            repository. It's an empty scaffold: it acknowledges each command and logs one line, but doesn't talk to
+            the stations yet. Build the forwarding so all three stay in sync under chaos.
+          </p>
+          <p className="muted">
+            <strong>Branching rules:</strong> do <strong>not</strong> push to <span className="inline-code">main</span>.
+            Create your own branch named after your team, all lowercase and alphanumeric only (no spaces, dashes or
+            special characters) — e.g. team <span className="inline-code">Apollo 11!</span> becomes branch{" "}
+            <span className="inline-code">apollo11</span>.
           </p>
           <pre><code>{STARTER_SNIPPET}</code></pre>
         </div>
