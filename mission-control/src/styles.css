@@ -814,6 +814,94 @@ ul.clean li {
 .trace-table tbody tr.trace-error { border-left-color: var(--red); }
 .trace-step-cell { font-family: monospace; font-size: 11.5px; color: var(--muted); word-break: break-all; }
 
+/* --- Request scatter tooltip ---------------------------------------------- */
+.scatter-tip {
+  background: #0e1838;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 170px;
+}
+.scatter-tip-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+.scatter-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+.scatter-tip-row b { color: var(--text); font-weight: 600; }
+
+/* --- Command lifecycle Gantt ---------------------------------------------- */
+.gantt-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 6px;
+  padding: 0 96px 0 86px; /* align with track between label and final columns */
+}
+.gantt { display: flex; flex-direction: column; gap: 6px; max-height: 460px; overflow-y: auto; }
+.gantt-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 84px;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 0;
+}
+.gantt-row:hover { background: var(--bg-2); }
+.gantt-label { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gantt-track {
+  position: relative;
+  height: 22px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.gantt-bar {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 8px;
+  border: 1px solid;
+  border-radius: 4px;
+  min-width: 2px;
+}
+.gantt-diamond {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  line-height: 1;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+}
+.gantt-station {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  color: #02101f;
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1px rgba(2, 16, 31, 0.5);
+}
+.gantt-final { font-size: 12px; font-weight: 700; text-align: right; }
+
+
 
 
 

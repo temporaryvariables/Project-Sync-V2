@@ -16,6 +16,8 @@ import { flightDirector, deepSpaceNetwork } from "../api";
 import { teamId } from "../pb";
 import { useRelayUrl } from "../settings";
 import TraceDrawer from "../components/TraceDrawer";
+import RequestScatter from "../components/RequestScatter";
+import CommandTimeline from "../components/CommandTimeline";
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -262,6 +264,8 @@ export default function DeepSpaceNetwork() {
         )}
       </div>
 
+      <RequestScatter requests={requests} />
+
       <div className="grid cols-2">
         <div className="panel">
           <h2>Response times</h2>
@@ -368,6 +372,8 @@ export default function DeepSpaceNetwork() {
           </div>
         )}
       </div>
+
+      <CommandTimeline records={records} onOpenTrace={setTraceId} />
 
       {traceId && <TraceDrawer correlationId={traceId} onClose={() => setTraceId(null)} />}
     </div>
