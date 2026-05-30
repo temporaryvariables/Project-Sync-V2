@@ -91,9 +91,9 @@ export default function Guide() {
           </div>
         </div>
         <p className="muted">
-          The Deep Space Network generates traffic against your relay. For each command it records the expected
-          value in the mission log, then posts to your <span className="inline-code">/replicate</span> endpoint.
-          Your relay fans the command out to all three stations.
+          The Deep Space Network generates traffic against your relay. For each command it posts to your{" "}
+          <span className="inline-code">/replicate</span> endpoint. Your relay fans the command out to all three
+          stations, and the dashboard shows whether the three sources of truth ended up in sync.
         </p>
       </div>
 

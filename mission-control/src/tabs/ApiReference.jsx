@@ -10,7 +10,7 @@ const ENDPOINTS = [
     method: "PUT",
     path: "/groundstation/:station/:selector",
     auth: true,
-    desc: "Write a command payload to one station (nasa, esa or jaxa). Chaos rules apply here.",
+    desc: "Write a command payload to one station (nasa, esa or jaxa).",
     request: `{
   "payload": "fire_thruster",
   "sequence_number": 12,
@@ -28,7 +28,7 @@ const ENDPOINTS = [
     method: "GET",
     path: "/groundstation/:station/:selector",
     auth: true,
-    desc: "Read the current payload stored at one station. Chaos rules apply.",
+    desc: "Read the current payload stored at one station.",
     response: `{
   "selector": "cmd-4821",
   "station": "nasa",
@@ -40,7 +40,7 @@ const ENDPOINTS = [
     method: "GET",
     path: "/groundstation/:station",
     auth: true,
-    desc: "List every command currently stored at one station (paginated). Chaos rules apply.",
+    desc: "List every command currently stored at one station (paginated).",
     response: `{
   "station": "nasa",
   "page": 1,
@@ -55,20 +55,8 @@ const ENDPOINTS = [
     method: "DELETE",
     path: "/groundstation/:station/:selector",
     auth: true,
-    desc: "Clear the payload at one station. Chaos rules apply.",
+    desc: "Clear the payload at one station.",
     response: `{ "selector": "cmd-4821", "station": "nasa", "deleted": true, "data_in_sync": false }`,
-  },
-  {
-    method: "GET",
-    path: "/commands",
-    auth: true,
-    desc: "Paginated list of your team's commands with each station's value and computed sync status.",
-    response: `{
-  "page": 1,
-  "perPage": 50,
-  "total": 134,
-  "items": [ { "selector": "cmd-4821", "nasa_payload": "...", "data_in_sync": true } ]
-}`,
   },
 ];
 
@@ -97,7 +85,7 @@ export default function ApiReference() {
         <p className="muted">
           This is the only API your relay talks to. Every request needs an
           <span className="inline-code">Authorization: Bearer &lt;token&gt;</span> header except the healthcheck.
-          Your team is derived from the token. The internal mission log endpoint is not part of your contract.
+          Your team is derived from the token.
         </p>
       </div>
 

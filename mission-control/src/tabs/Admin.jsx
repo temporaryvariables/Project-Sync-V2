@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { flightDirector, groundStation } from "../api";
+import { flightDirector } from "../api";
 
 const MODES = [
   { key: "blackout", label: "Station Blackout", hint: "Returns HTTP 500 on every request." },
@@ -31,11 +31,6 @@ export default function Admin() {
   const [station, setStation] = useState("all");
   const [mode, setMode] = useState("blackout");
   const [configText, setConfigText] = useState("{}");
-
-  // manual relay form
-  const [selector, setSelector] = useState("cmd-9001");
-  const [payload, setPayload] = useState("fire_thruster");
-  const [seq, setSeq] = useState(1);
 
   const load = useCallback(async () => {
     try {
@@ -108,68 +103,33 @@ export default function Admin() {
     }
   }
 
-  async function manualRelay() {
-    setError("");
-    try {
-      await groundStation.putMissionLog(selector, { payload, sequence_number: Number(seq) });
-      for (const st of ["nasa", "esa", "jaxa"]) {
-        await groundStation.putStation(st, selector, { payload, sequence_number: Number(seq) });
-      }
-      flash(`Relayed ${selector} to all three stations.`);
-    } catch (e) {
-      setError(e.message);
-    }
-  }
-
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
       {info && <div className="info-banner">{info}</div>}
 
-      <div className="grid cols-2">
-        <div className="panel">
-          <h2>Database</h2>
-          <p className="muted">Live counts for your team. Reset clears everything your team owns.</p>
-          {tables ? (
-            <div className="grid cols-3" style={{ marginBottom: 16 }}>
-              <div className="stat">
-                <div className="value">{tables.replication_records.total}</div>
-                <div className="label">Commands</div>
-              </div>
-              <div className="stat">
-                <div className="value status-full">{tables.replication_records.full_match}</div>
-                <div className="label">In sync</div>
-              </div>
-              <div className="stat">
-                <div className="value status-none">{tables.replication_records.no_match}</div>
-                <div className="label">No match</div>
-              </div>
+      <div className="panel">
+        <h2>Database</h2>
+        <p className="muted">Live counts for your team. Reset clears everything your team owns.</p>
+        {tables ? (
+          <div className="grid cols-3" style={{ marginBottom: 16 }}>
+            <div className="stat">
+              <div className="value">{tables.replication_records.total}</div>
+              <div className="label">Commands</div>
             </div>
-          ) : (
-            <p className="muted">Loading...</p>
-          )}
-          <button className="btn danger" onClick={doReset}>Reset team database</button>
-        </div>
-
-        <div className="panel">
-          <h2>Manual command relay</h2>
-          <p className="muted">Set the expected value and write it to all three stations in one click.</p>
-          <div className="field">
-            <label>Selector</label>
-            <input value={selector} onChange={(e) => setSelector(e.target.value)} />
-          </div>
-          <div className="row">
-            <div style={{ flex: 1 }}>
-              <label>Payload</label>
-              <input value={payload} onChange={(e) => setPayload(e.target.value)} />
+            <div className="stat">
+              <div className="value status-full">{tables.replication_records.full_match}</div>
+              <div className="label">In sync</div>
             </div>
-            <div style={{ width: 120 }}>
-              <label>Sequence</label>
-              <input type="number" value={seq} onChange={(e) => setSeq(e.target.value)} />
+            <div className="stat">
+              <div className="value status-none">{tables.replication_records.no_match}</div>
+              <div className="label">No match</div>
             </div>
           </div>
-          <button className="btn" style={{ marginTop: 12 }} onClick={manualRelay}>Relay command</button>
-        </div>
+        ) : (
+          <p className="muted">Loading...</p>
+        )}
+        <button className="btn danger" onClick={doReset}>Reset team database</button>
       </div>
 
       <div className="panel">

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { pb, currentUser, logout } from "./pb";
 import Login from "./components/Login";
+import RelaySettings from "./components/RelaySettings";
 import Guide from "./tabs/Guide";
 import ApiReference from "./tabs/ApiReference";
 import DeepSpaceNetwork from "./tabs/DeepSpaceNetwork";
@@ -41,6 +42,7 @@ export default function App() {
           <span className="pill">
             <span className="dot on" /> Team: <strong style={{ color: "var(--text)" }}>{user?.team_id || "none"}</strong>
           </span>
+          <RelaySettings />
           <span>{user?.email}</span>
           <button
             className="btn ghost sm"

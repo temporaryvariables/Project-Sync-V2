@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { deepSpaceNetwork } from "../api";
+import { useRelayUrl } from "../settings";
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -10,7 +11,7 @@ function fmtElapsed(ms) {
 export default function DeepSpaceNetwork() {
   const [scenarios, setScenarios] = useState([]);
   const [scenario, setScenario] = useState("");
-  const [relayUrl, setRelayUrl] = useState("http://localhost:4000");
+  const relayUrl = useRelayUrl();
   const [status, setStatus] = useState(null);
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
@@ -47,6 +48,10 @@ export default function DeepSpaceNetwork() {
 
   async function start() {
     setError("");
+    if (!relayUrl) {
+      setError('No relay URL set. Click "⚙ Relay" in the top bar to set it.');
+      return;
+    }
     setBusy(true);
     try {
       await deepSpaceNetwork.start({ scenario, relayUrl });
@@ -85,12 +90,9 @@ export default function DeepSpaceNetwork() {
         <div className="row">
           <div style={{ flex: "1 1 280px" }}>
             <label>Relay URL</label>
-            <input
-              value={relayUrl}
-              onChange={(e) => setRelayUrl(e.target.value)}
-              placeholder="https://your-relay.example.com"
-              disabled={running}
-            />
+            <div className="readonly-field">
+              {relayUrl || <span className="muted">Not set — click “⚙ Relay” in the top bar</span>}
+            </div>
           </div>
           <div style={{ flex: "1 1 220px" }}>
             <label>Scenario</label>
@@ -103,7 +105,7 @@ export default function DeepSpaceNetwork() {
           {running ? (
             <button className="btn danger" onClick={stop} disabled={busy}>Stop transmission</button>
           ) : (
-            <button className="btn" onClick={start} disabled={busy || !scenario}>Start transmission</button>
+            <button className="btn" onClick={start} disabled={busy || !scenario || !relayUrl}>Start transmission</button>
           )}
         </div>
 
