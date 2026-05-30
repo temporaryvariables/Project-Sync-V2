@@ -380,7 +380,7 @@ app.get("/teams/:teamId/records", async (req, res) => {
 // One row per step of a command's end to end journey. Every read and write is
 // scoped to the team derived from the token, so a team can ONLY ever see or
 // write its own logs.
-const LOG_LEVELS = ["info", "warn", "error"];
+const LOG_LEVELS = ["info", "success", "warn", "error"];
 
 function sanitizeEvent(ev, teamId) {
   if (!ev || typeof ev !== "object") return null;

@@ -684,6 +684,7 @@ ul.clean li {
 }
 
 .trace-item.trace-info { border-left-color: var(--accent); }
+.trace-item.trace-success { border-left-color: var(--green); }
 .trace-item.trace-warn { border-left-color: var(--amber); }
 .trace-item.trace-error { border-left-color: var(--red); }
 
@@ -732,5 +733,74 @@ ul.clean li {
   color: var(--muted);
   word-break: break-all;
 }
+
+/* --- Mission logs table --------------------------------------------------- */
+.log-table { table-layout: fixed; width: 100%; }
+.log-table td { vertical-align: top; }
+
+.log-time {
+  font-family: monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.log-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.log-badge.log-info { background: rgba(56, 189, 248, 0.14); color: var(--accent); border-color: rgba(56, 189, 248, 0.4); }
+.log-badge.log-success { background: rgba(52, 211, 153, 0.14); color: var(--green); border-color: rgba(52, 211, 153, 0.4); }
+.log-badge.log-warn { background: rgba(251, 191, 36, 0.14); color: var(--amber); border-color: rgba(251, 191, 36, 0.4); }
+.log-badge.log-error { background: rgba(248, 113, 113, 0.14); color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
+
+.log-msg { font-size: 13px; color: var(--text); line-height: 1.45; }
+.log-source {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  background: var(--panel-2);
+  padding: 1px 6px;
+  border-radius: 5px;
+  vertical-align: middle;
+}
+
+.log-props { display: flex; flex-wrap: wrap; gap: 4px; }
+.log-prop {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+.log-prop-k { color: var(--muted); }
+.log-prop-v { color: var(--text); font-family: monospace; word-break: break-all; }
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+.link-btn:hover { text-decoration: underline; }
+
 
 

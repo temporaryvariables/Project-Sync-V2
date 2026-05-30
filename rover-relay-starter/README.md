@@ -44,6 +44,39 @@ Then point the **Deep Space Network** tab at `http://localhost:4000` (or your de
 
 The Deep Space Network forwards a PocketBase Bearer token in the `Authorization` header. Pass it straight through to the ground station API on every call, exactly as the starter already does.
 
+## Optional: log your own story to Mission Control
+
+Mission Control has a **Mission logs** table that reads like a story: every step of
+every command, in order. The platform writes its own lines, and you can add yours so
+they show up interleaved on the same trace.
+
+The starter already does this with a tiny `missionLog(...)` helper. It is **fire and
+forget** — it never slows down or breaks a replication. To turn it on, set one extra
+environment variable so the relay knows where Mission Control's logs live:
+
+```bash
+GROUND_STATION_URL=http://localhost:3001 \
+FLIGHT_DIRECTOR_URL=http://localhost:3002 \
+npm run dev
+```
+
+| Variable | Required? | What it does |
+|----------|-----------|--------------|
+| `GROUND_STATION_URL` | Yes | Where to forward commands. |
+| `FLIGHT_DIRECTOR_URL` | No | Where to send your log lines. Use the **same** Flight Director URL Mission Control uses. Unset = no relay logs. |
+| `RELAY_LOGGING` | No | Set to `false` to disable your logs even if `FLIGHT_DIRECTOR_URL` is set. |
+
+Call `missionLog(token, correlationId, { level, message, properties })` anywhere in
+your relay. `token` and `correlationId` both arrive on the incoming request:
+
+```js
+missionLog(auth, correlationId, {
+  level: "success",            // "info" | "success" | "warn" | "error"
+  message: "Relay finished fanning out the command.",
+  properties: { retries: 2 }, // any extra key/values to show in the table
+});
+```
+
 ## Your mission
 
 Fork this folder and improve it. Suggested upgrades, roughly in order of impact:

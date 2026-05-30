@@ -20,6 +20,12 @@ import cors from "cors";
 
 const PORT = process.env.PORT || 4000;
 const GROUND_STATION_URL = normalizeUrl(process.env.GROUND_STATION_URL, "http://localhost:3001");
+// OPTIONAL: where to send your own log lines so they show up in Mission Control,
+// interleaved with the platform's logs for the same command. Set this to the
+// public Flight Director URL (the same one Mission Control uses) to enable it.
+// Leave it unset to disable relay logging entirely.
+const FLIGHT_DIRECTOR_URL = normalizeUrl(process.env.FLIGHT_DIRECTOR_URL, "http://localhost:3002");
+const RELAY_LOGGING = process.env.RELAY_LOGGING !== "false"; // on by default in dev
 const STATIONS = ["nasa", "esa", "jaxa"];
 
 // Accept the ground station URL with or without a scheme. A bare host like
@@ -34,6 +40,36 @@ function normalizeUrl(value, fallback) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// -----------------------------------------------------------------------------
+// OPTIONAL: log your own story to Mission Control.
+//
+// Call missionLog(...) anywhere in your relay to add a line to the trace for a
+// command. It is fire and forget: it never slows down or breaks a replication,
+// and it does nothing unless RELAY_LOGGING is enabled and a correlation id is
+// present. The token and correlation id both arrive on the incoming request.
+//
+// level: "info" | "success" | "warn" | "error"
+// properties: any extra key/values you want to see in the dashboard.
+// -----------------------------------------------------------------------------
+function missionLog(token, correlationId, { level = "info", step, selector, message, properties = {} }) {
+  if (!RELAY_LOGGING || !token || !correlationId) return;
+  const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  fetch(`${FLIGHT_DIRECTOR_URL}/logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: auth },
+    body: JSON.stringify({
+      ts: new Date().toISOString(),
+      service: "rover-relay",
+      level,
+      step: step || "relay.note",
+      selector,
+      message,
+      correlation_id: correlationId,
+      meta: properties,
+    }),
+  }).catch(() => {});
+}
 
 app.get("/health", (_req, res) => res.json({ status: "ok", service: "rover-relay-starter" }));
 
@@ -54,6 +90,15 @@ app.post("/replicate", async (req, res) => {
   // make this relay resilient.
   const correlationId = req.headers["x-correlation-id"] || "";
 
+  // Example of your own logging. Add, remove, or change these freely.
+  missionLog(auth, correlationId, {
+    level: "info",
+    step: "relay.received",
+    selector,
+    message: `Relay received ${selector} ("${payload}") and will fan out to all three stations.`,
+    properties: { payload, sequence_number },
+  });
+
   const results = {};
   for (const station of STATIONS) {
     try {
@@ -67,8 +112,25 @@ app.post("/replicate", async (req, res) => {
         body: JSON.stringify({ payload, sequence_number }),
       });
       results[station] = r.status;
+      missionLog(auth, correlationId, {
+        level: r.ok ? "success" : "warn",
+        step: "relay.station_result",
+        selector,
+        station,
+        message: r.ok
+          ? `Relay delivered ${selector} to ${station.toUpperCase()} (HTTP ${r.status}).`
+          : `Relay got HTTP ${r.status} from ${station.toUpperCase()} for ${selector}. A resilient relay would retry or back off here.`,
+        properties: { station, http_status: r.status },
+      });
     } catch (err) {
       results[station] = "error";
+      missionLog(auth, correlationId, {
+        level: "error",
+        step: "relay.station_result",
+        selector,
+        message: `Relay could not reach ${station.toUpperCase()} for ${selector}.`,
+        properties: { station },
+      });
     }
   }
 

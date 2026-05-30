@@ -122,6 +122,11 @@ async function j(url, opts) {
   check("trace endpoint ok", trace.status === 200, `got ${trace.status}`);
   check("trace has events", Array.isArray(trace.body.items) && trace.body.items.length >= 2, `count=${trace.body.items?.length}`);
   check("trace has station.put", trace.body.items?.some((e) => e.step === "station.put"), JSON.stringify(trace.body.items?.map((e) => e.step)));
+  check("trace events carry timestamps", trace.body.items?.every((e) => !!e.ts), JSON.stringify(trace.body.items?.map((e) => e.ts)));
+  check("trace events read like a story", trace.body.items?.every((e) => typeof e.message === "string" && e.message.length > 0),
+    JSON.stringify(trace.body.items?.map((e) => e.message)));
+  check("trace has a success log", trace.body.items?.some((e) => e.level === "success"),
+    JSON.stringify(trace.body.items?.map((e) => e.level)));
   const logs = await j(`${FD}/logs?limit=50`, { headers: H });
   check("logs list ok", logs.status === 200 && Array.isArray(logs.body.items), `got ${logs.status}`);
   check("record links correlation_id", true); // linkage verified via writeColumn; presence checked in trace

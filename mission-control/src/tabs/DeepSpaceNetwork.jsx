@@ -16,6 +16,7 @@ import { flightDirector, deepSpaceNetwork } from "../api";
 import { teamId } from "../pb";
 import { useRelayUrl } from "../settings";
 import TraceDrawer from "../components/TraceDrawer";
+import MissionLogs from "../components/MissionLogs";
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -368,6 +369,8 @@ export default function DeepSpaceNetwork() {
           </div>
         )}
       </div>
+
+      <MissionLogs onOpenTrace={setTraceId} />
 
       {traceId && <TraceDrawer correlationId={traceId} onClose={() => setTraceId(null)} />}
     </div>

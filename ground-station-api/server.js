@@ -409,7 +409,18 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
     const rules = await activeRules(req.teamId, station);
     const chaos = await applyChaos(req.teamId, station, rules);
     if (chaos) {
+      const upper = station.toUpperCase();
+      let message;
+      if (chaos.mode === "blackout") {
+        message = `${upper} is in a blackout and returned HTTP 500 — the command "${payload}" for ${selector} never landed.`;
+      } else if (chaos.mode === "throttle") {
+        const retry = chaos.body?.retry_after_ms;
+        message = `${upper} is rate limiting and rejected ${selector} with HTTP 429. Back off and retry after ${retry} ms.`;
+      } else {
+        message = chaos.body?.error || `Chaos (${chaos.mode}) hit ${upper} for ${selector}.`;
+      }
       logEvent(token, {
+        ts: new Date(started).toISOString(),
         correlation_id: cid,
         level: chaos.status >= 500 ? "error" : "warn",
         step: `station.${chaos.mode || "chaos"}`,
@@ -417,9 +428,10 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
         station,
         http_status: chaos.status,
         latency_ms: Date.now() - started,
-        message: chaos.body?.error || `Chaos (${chaos.mode}) on ${station.toUpperCase()}`,
+        message,
         meta: {
           mode: chaos.mode,
+          payload,
           ...(chaos.body?.retry_after_ms ? { retry_after_ms: chaos.body.retry_after_ms } : {}),
         },
       });
@@ -429,7 +441,14 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
     const existing = await loadRow(pool, req.teamId, req.params.selector);
     const reject = orderingRejection(rules, sequence_number ?? null, existing?.[`${station}_seq`] ?? null);
     if (reject) {
+      const upper = station.toUpperCase();
+      const current = reject.body?.current_sequence_number ?? null;
+      const message =
+        sequence_number === null || sequence_number === undefined
+          ? `${upper} rejected ${selector} with HTTP 409: the command arrived without a sequence number, so ordering can't be guaranteed.`
+          : `${upper} rejected ${selector} with HTTP 409: sequence ${sequence_number} is stale (it already accepted ${current}).`;
       logEvent(token, {
+        ts: new Date(started).toISOString(),
         correlation_id: cid,
         level: "warn",
         step: "station.ordering_rejected",
@@ -437,10 +456,11 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
         station,
         http_status: reject.status,
         latency_ms: Date.now() - started,
-        message: reject.body?.error,
+        message,
         meta: {
+          payload,
           sequence_number: sequence_number ?? null,
-          current_sequence_number: reject.body?.current_sequence_number ?? null,
+          current_sequence_number: current,
         },
       });
       return res.status(reject.status).json(reject.body);
@@ -451,15 +471,25 @@ app.put("/groundstation/:station/:selector", async (req, res) => {
       if_match: if_match ?? existing?.if_match ?? null,
       correlation_id: cid,
     });
+    const upper = station.toUpperCase();
+    const syncMsg =
+      row.expected_status === "full_match"
+        ? "All three stations now match the target — this command is fully in sync."
+        : row.expected_status === "no_match"
+        ? "No station matches the target yet."
+        : row.expected_status === "partial_match"
+        ? "Some stations still disagree with the target."
+        : "";
     logEvent(token, {
+      ts: new Date(started).toISOString(),
       correlation_id: cid,
-      level: "info",
+      level: "success",
       step: "station.put",
       selector,
       station,
       http_status: 200,
       latency_ms: Date.now() - started,
-      message: `Wrote "${payload}" to ${station.toUpperCase()}`,
+      message: `${upper} accepted "${payload}" for ${selector} (sequence ${sequence_number ?? "none"}).${syncMsg ? " " + syncMsg : ""}`,
       meta: {
         payload,
         sequence_number: sequence_number ?? null,
@@ -532,13 +562,14 @@ app.put("/missionlog/:selector", async (req, res) => {
       sequence_number < existing.sequence_number
     ) {
       logEvent(token, {
+        ts: new Date(started).toISOString(),
         correlation_id: cid,
         level: "warn",
         step: "missionlog.skipped_stale",
         selector,
         http_status: 200,
         latency_ms: Date.now() - started,
-        message: `Stale expected value ignored (seq ${sequence_number} < ${existing.sequence_number})`,
+        message: `Kept the existing target for ${selector}: an out-of-order update with sequence ${sequence_number} arrived, but the current target (sequence ${existing.sequence_number}) is newer, so it was ignored.`,
         meta: { sequence_number, current_sequence_number: existing.sequence_number },
       });
       return res.json({
@@ -557,13 +588,14 @@ app.put("/missionlog/:selector", async (req, res) => {
       correlation_id: cid,
     });
     logEvent(token, {
+      ts: new Date(started).toISOString(),
       correlation_id: cid,
       level: "info",
       step: "missionlog.put",
       selector,
       http_status: 200,
       latency_ms: Date.now() - started,
-      message: `Expected value set to "${payload}"`,
+      message: `Recorded the target for ${selector}: every station should converge on "${payload}" (sequence ${sequence_number ?? "none"}).`,
       meta: { payload, sequence_number: sequence_number ?? null },
     });
     res.json({

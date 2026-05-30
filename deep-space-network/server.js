@@ -213,23 +213,28 @@ async function tick(teamId, token, scenarioKey) {
       body: JSON.stringify({ payload, sequence_number }),
     });
     trace.push({
+      ts: new Date(mlStart).toISOString(),
       correlation_id: correlationId,
       level: r.ok ? "info" : "error",
       step: "dsn.missionlog_set",
       selector,
       http_status: r.status,
       latency_ms: Date.now() - mlStart,
-      message: `Set expected value "${payload}" (seq ${sequence_number})`,
+      message: r.ok
+        ? `Mission Control logged the target for ${selector}: every station should end up holding "${payload}" (sequence ${sequence_number}).`
+        : `Mission Control could not log the target for ${selector} (the ground station replied ${r.status}).`,
       meta: { payload, sequence_number },
     });
   } catch (err) {
     trace.push({
+      ts: new Date(mlStart).toISOString(),
       correlation_id: correlationId,
       level: "error",
       step: "dsn.missionlog_set",
       selector,
       latency_ms: Date.now() - mlStart,
-      message: "Mission log unreachable",
+      message: `Mission Control could not reach the ground station to log the target for ${selector}.`,
+      meta: { payload, sequence_number },
     });
     recordResult(run, selector, payload, 0, 0, false, "mission log unreachable", correlationId);
     flushTrace(token, trace);
@@ -246,25 +251,29 @@ async function tick(teamId, token, scenarioKey) {
     });
     const latency = Date.now() - started;
     trace.push({
+      ts: new Date(started).toISOString(),
       correlation_id: correlationId,
-      level: r.ok ? "info" : "error",
+      level: r.ok ? "success" : "error",
       step: "dsn.relay_transmit",
       selector,
       http_status: r.status,
       latency_ms: latency,
-      message: r.ok ? "Relay accepted the command" : `Relay returned ${r.status}`,
+      message: r.ok
+        ? `Transmitted ${selector} to your relay and it accepted the command in ${latency} ms.`
+        : `Transmitted ${selector} to your relay but it answered with HTTP ${r.status} after ${latency} ms.`,
       meta: { payload, sequence_number, relayUrl: run.relayUrl },
     });
     recordResult(run, selector, payload, latency, r.status, r.ok, r.ok ? null : `relay returned ${r.status}`, correlationId);
   } catch (err) {
     const latency = Date.now() - started;
     trace.push({
+      ts: new Date(started).toISOString(),
       correlation_id: correlationId,
       level: "error",
       step: "dsn.relay_transmit",
       selector,
       latency_ms: latency,
-      message: "Relay unreachable",
+      message: `Could not reach your relay at ${run.relayUrl}. Is it running and reachable from the internet?`,
       meta: { relayUrl: run.relayUrl },
     });
     recordResult(run, selector, payload, latency, 0, false, "relay unreachable", correlationId);

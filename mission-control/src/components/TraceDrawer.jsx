@@ -11,6 +11,7 @@ const SERVICE_LABELS = {
 function levelClass(level) {
   if (level === "error") return "trace-error";
   if (level === "warn") return "trace-warn";
+  if (level === "success") return "trace-success";
   return "trace-info";
 }
 
