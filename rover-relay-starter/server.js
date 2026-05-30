@@ -21,13 +21,10 @@ import cors from "cors";
 const PORT = process.env.PORT || 4000;
 const GROUND_STATION_URL = normalizeUrl(process.env.GROUND_STATION_URL, "http://localhost:3001");
 // Where to send your own log lines so they show up in Mission Control,
-// interleaved with the platform's logs for the same command. You normally do
-// NOT need to set this: the Deep Space Network tells the relay where to log via
-// the X-Flight-Director-Url header on every command. Setting this env var just
-// overrides that default. Set RELAY_LOGGING=false to turn your logs off.
-const FLIGHT_DIRECTOR_URL = process.env.FLIGHT_DIRECTOR_URL
-  ? normalizeUrl(process.env.FLIGHT_DIRECTOR_URL)
-  : "";
+// interleaved with the platform's logs for the same command. Point this at the
+// same Flight Director URL Mission Control uses. Set RELAY_LOGGING=false to turn
+// your logs off entirely.
+const FLIGHT_DIRECTOR_URL = normalizeUrl(process.env.FLIGHT_DIRECTOR_URL, "http://localhost:3002");
 const RELAY_LOGGING = process.env.RELAY_LOGGING !== "false"; // on by default
 const STATIONS = ["nasa", "esa", "jaxa"];
 
@@ -45,21 +42,20 @@ app.use(cors());
 app.use(express.json());
 
 // -----------------------------------------------------------------------------
-// Log your own story to Mission Control. This is ON by default.
+// Log your own story to Mission Control. This is ON by default (set
+// FLIGHT_DIRECTOR_URL so the relay knows where Mission Control's logs live).
 //
 // Call missionLog(...) anywhere in your relay to add a line to the trace for a
 // command. It is fire and forget: it never slows down or breaks a replication.
-// The Deep Space Network tells the relay where to log (X-Flight-Director-Url),
-// so this just works with no setup. Set RELAY_LOGGING=false to turn it off.
+// Set RELAY_LOGGING=false to turn it off.
 //
 // level: "info" | "success" | "warn" | "error"
 // properties: any extra key/values you want to see in the dashboard.
 // -----------------------------------------------------------------------------
-function missionLog(ctx, { level = "info", step, selector, station, message, properties = {} }) {
-  const { token, correlationId, flightDirectorUrl } = ctx;
-  if (!RELAY_LOGGING || !token || !correlationId || !flightDirectorUrl) return;
+function missionLog(token, correlationId, { level = "info", step, selector, station, message, properties = {} }) {
+  if (!RELAY_LOGGING || !token || !correlationId || !FLIGHT_DIRECTOR_URL) return;
   const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-  fetch(`${flightDirectorUrl}/logs`, {
+  fetch(`${FLIGHT_DIRECTOR_URL}/logs`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: auth },
     body: JSON.stringify({
@@ -95,13 +91,8 @@ app.post("/replicate", async (req, res) => {
   // make this relay resilient.
   const correlationId = req.headers["x-correlation-id"] || "";
 
-  // The Deep Space Network tells us where to send our own log lines. An env var
-  // (FLIGHT_DIRECTOR_URL) overrides it if you ever want to point somewhere else.
-  const flightDirectorUrl = FLIGHT_DIRECTOR_URL || normalizeUrl(req.headers["x-flight-director-url"]);
-  const log = { token: auth, correlationId, flightDirectorUrl };
-
   // Example of your own logging. Add, remove, or change these freely.
-  missionLog(log, {
+  missionLog(auth, correlationId, {
     level: "info",
     step: "relay.received",
     selector,
@@ -122,7 +113,7 @@ app.post("/replicate", async (req, res) => {
         body: JSON.stringify({ payload, sequence_number }),
       });
       results[station] = r.status;
-      missionLog(log, {
+      missionLog(auth, correlationId, {
         level: r.ok ? "success" : "warn",
         step: "relay.station_result",
         selector,
@@ -134,7 +125,7 @@ app.post("/replicate", async (req, res) => {
       });
     } catch (err) {
       results[station] = "error";
-      missionLog(log, {
+      missionLog(auth, correlationId, {
         level: "error",
         step: "relay.station_result",
         selector,

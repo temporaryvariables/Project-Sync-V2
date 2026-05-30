@@ -50,23 +50,28 @@ Mission Control has a **Mission logs** table that reads like a story: every step
 every command, in order. The platform writes its own lines, and the relay adds yours
 so they show up interleaved on the same trace.
 
-This is **on by default** — no setup required. The Deep Space Network tells the relay
-where to log via the `X-Flight-Director-Url` header on every command, and the starter's
-`missionLog(...)` helper sends fire-and-forget log lines there. It never slows down or
-breaks a replication.
+To enable it, set `FLIGHT_DIRECTOR_URL` so the relay knows where Mission Control's logs
+live (use the **same** Flight Director URL Mission Control uses). The starter's
+`missionLog(...)` helper then sends fire-and-forget log lines there — it never slows
+down or breaks a replication.
+
+```bash
+GROUND_STATION_URL=http://localhost:3001 \
+FLIGHT_DIRECTOR_URL=http://localhost:3002 \
+npm run dev
+```
 
 | Variable | Required? | What it does |
 |----------|-----------|--------------|
 | `GROUND_STATION_URL` | Yes | Where to forward commands. |
-| `FLIGHT_DIRECTOR_URL` | No | Override where log lines go. Normally unnecessary — the header handles it. |
+| `FLIGHT_DIRECTOR_URL` | For logging | Where to send your log lines. Same URL Mission Control uses. |
 | `RELAY_LOGGING` | No | Set to `false` to turn your logs off entirely. |
 
-Call `missionLog(log, { level, message, properties })` anywhere in your relay. The `log`
-context (token, correlation id, and log target) is built once per request from the
-incoming headers:
+Call `missionLog(token, correlationId, { level, message, properties })` anywhere in
+your relay. The `token` and `correlationId` both arrive on the incoming request:
 
 ```js
-missionLog(log, {
+missionLog(auth, correlationId, {
   level: "success",            // "info" | "success" | "warn" | "error"
   message: "Relay finished fanning out the command.",
   properties: { retries: 2 }, // any extra key/values to show in the table
