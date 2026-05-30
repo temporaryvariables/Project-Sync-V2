@@ -140,6 +140,32 @@ async function j(url, opts) {
   const otherTrace = await j(`${FD}/logs/${CID}`, { headers: { Authorization: "Bearer other-team", "Content-Type": "application/json" } });
   check("other team sees no trace", (otherTrace.body.items || []).length === 0, JSON.stringify(otherTrace.body));
 
+  console.log("\n=== 11b. RELAY TIMEOUT CHAOS + CLEAR DATA ===");
+  await j(`${FD}/reset`, { method: "POST", headers: H });
+  // A relay_timeout rule makes Mission Control give up on the relay almost
+  // immediately, so every transmission should fail with "relay timeout".
+  const toRule = await j(`${FD}/chaos`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ mode: "relay_timeout", station: "all", config: { timeout_ms: 1 }, enabled: true }),
+  });
+  check("relay_timeout rule created", toRule.status === 201, JSON.stringify(toRule.body));
+  await j(`${DSN}/start`, {
+    method: "POST", headers: H,
+    body: JSON.stringify({ scenario: "steady_transmission", relayUrl: RELAY, config: { intervalMs: 400, durationMs: 2000 } }),
+  });
+  await sleep(2600);
+  const toStatus = await j(`${DSN}/status`, { headers: H });
+  check("relay timeout fails transmissions", toStatus.body.fail > 0,
+    JSON.stringify(toStatus.body));
+  const toReqs = await j(`${DSN}/requests`, { headers: H });
+  check("request marked relay timeout", (toReqs.body.items || []).some((r) => r.error === "relay timeout"),
+    JSON.stringify((toReqs.body.items || []).map((r) => r.error)));
+  // Clear data wipes the in-memory timeline.
+  const cleared = await j(`${DSN}/clear`, { method: "POST", headers: H });
+  check("clear data ok", cleared.status === 200 && cleared.body.sent === 0, JSON.stringify(cleared.body));
+  const afterClear = await j(`${DSN}/requests`, { headers: H });
+  check("timeline empty after clear", (afterClear.body.items || []).length === 0, `count=${afterClear.body.items?.length}`);
+
   console.log("\n=== 12. CLEANUP ===");
   const cleanup = await j(`${FD}/reset`, { method: "POST", headers: H });
   check("cleanup reset", cleanup.status === 200);

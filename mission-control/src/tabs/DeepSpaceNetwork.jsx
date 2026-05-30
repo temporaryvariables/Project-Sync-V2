@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -61,8 +61,9 @@ export default function DeepSpaceNetwork() {
 
   // dashboard state
   const [records, setRecords] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [latencies, setLatencies] = useState([]);
+
+  // command visibility filter — hide outlier commands from the charts
+  const [hidden, setHidden] = useState(() => new Set());
 
   // trace drawer
   const [traceId, setTraceId] = useState(null);
@@ -85,13 +86,6 @@ export default function DeepSpaceNetwork() {
       ]);
       setStatus(s);
       setRequests(r.items.slice().reverse());
-      setLatencies(
-        r.items.map((req, i) => ({
-          idx: i + 1,
-          latency: req.latencyMs,
-          time: new Date(req.ts).toLocaleTimeString(),
-        }))
-      );
     } catch (e) {
       // keep last known values
     }
@@ -99,7 +93,6 @@ export default function DeepSpaceNetwork() {
       try {
         const data = await flightDirector.teamRecords(myTeam, 100);
         setRecords(data.items);
-        setSummary(data.summary);
       } catch {
         // dashboard still works without record data
       }
@@ -122,9 +115,8 @@ export default function DeepSpaceNetwork() {
     // Clear everything for a clean slate so no data from a previous run lingers.
     setStatus(null);
     setRequests([]);
-    setLatencies([]);
     setRecords([]);
-    setSummary(null);
+    setHidden(new Set());
     try {
       // Wipe persisted command records for this team (keep chaos rules so the
       // configured scenario still applies), then start the new transmission.
@@ -150,14 +142,77 @@ export default function DeepSpaceNetwork() {
     }
   }
 
+  async function clearData() {
+    if (!confirm("Clear all transmissions, command records, and logs for your team? Chaos rules are kept.")) return;
+    setBusy(true);
+    setError("");
+    try {
+      await deepSpaceNetwork.clear();
+      await flightDirector.reset({ keepChaos: true });
+      setStatus(null);
+      setRequests([]);
+      setRecords([]);
+      setHidden(new Set());
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const running = status?.running;
   const selected = scenarios.find((s) => s.key === scenario);
 
-  const pieData = summary
-    ? Object.entries(summary)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => ({ name: STATUS_LABELS[k] || k, value: v, key: k }))
-    : [];
+  // Union of every command seen, in records (newest first) then requests.
+  const allSelectors = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const r of records) {
+      if (r.selector && !seen.has(r.selector)) { seen.add(r.selector); list.push(r.selector); }
+    }
+    for (const r of requests) {
+      if (r.selector && !seen.has(r.selector)) { seen.add(r.selector); list.push(r.selector); }
+    }
+    return list;
+  }, [records, requests]);
+
+  const isVisible = useCallback((sel) => !hidden.has(sel), [hidden]);
+  const visibleRecords = useMemo(() => records.filter((r) => isVisible(r.selector)), [records, isVisible]);
+  const visibleRequests = useMemo(() => requests.filter((r) => isVisible(r.selector)), [requests, isVisible]);
+
+  // Response-time series, oldest-first, indexed for the line chart.
+  const latencies = useMemo(
+    () =>
+      visibleRequests
+        .slice()
+        .reverse()
+        .map((req, i) => ({ idx: i + 1, latency: req.latencyMs, time: new Date(req.ts).toLocaleTimeString() })),
+    [visibleRequests]
+  );
+
+  // Sync-status breakdown recomputed from the visible commands only.
+  const pieData = useMemo(() => {
+    const counts = {};
+    for (const r of visibleRecords) {
+      const k = r.expected_status || "pending";
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    return Object.entries(counts)
+      .filter(([, v]) => v > 0)
+      .map(([k, v]) => ({ name: STATUS_LABELS[k] || k, value: v, key: k }));
+  }, [visibleRecords]);
+
+  function toggleSelector(sel) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(sel)) next.delete(sel);
+      else next.add(sel);
+      return next;
+    });
+  }
+  const showAll = () => setHidden(new Set());
+  const hideAll = () => setHidden(new Set(allSelectors));
 
   return (
     <div>
@@ -182,6 +237,9 @@ export default function DeepSpaceNetwork() {
           ) : (
             <button className="btn" onClick={start} disabled={busy || !scenario || !relayUrl}>Start transmission</button>
           )}
+          <button className="btn ghost" onClick={clearData} disabled={busy || running} title="Wipe all transmissions, records, and logs (keeps chaos rules)">
+            Clear data
+          </button>
         </div>
 
         {!relayUrl && (
@@ -221,9 +279,48 @@ export default function DeepSpaceNetwork() {
       </div>
 
       <div className="panel">
+        <h2>Commands shown</h2>
+        <p className="muted" style={{ fontSize: 13 }}>
+          Toggle commands on or off to keep outliers from skewing the charts. Hidden commands are removed
+          from every chart and table below.
+        </p>
+        {allSelectors.length === 0 ? (
+          <p className="muted">No commands yet. Start a scenario to populate this list.</p>
+        ) : (
+          <>
+            <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+              <button className="btn ghost sm" onClick={showAll} disabled={hidden.size === 0}>Select all</button>
+              <button className="btn ghost sm" onClick={hideAll} disabled={hidden.size === allSelectors.length}>Select none</button>
+              <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>
+                {allSelectors.length - hidden.size} of {allSelectors.length} shown
+              </span>
+            </div>
+            <div className="chip-row">
+              {allSelectors.map((sel) => {
+                const on = isVisible(sel);
+                return (
+                  <button
+                    key={sel}
+                    className={`chip ${on ? "chip-on" : "chip-off"}`}
+                    onClick={() => toggleSelector(sel)}
+                    title={on ? "Click to hide from charts" : "Click to show in charts"}
+                  >
+                    <span className="chip-dot" />
+                    {sel}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
+      <RequestScatter requests={visibleRequests} />
+
+      <div className="panel">
         <h2>Request timeline</h2>
-        {requests.length === 0 ? (
-          <p className="muted">No transmissions yet. Start a scenario to see the timeline.</p>
+        {visibleRequests.length === 0 ? (
+          <p className="muted">No transmissions to show. Start a scenario, or enable a command above.</p>
         ) : (
           <div style={{ maxHeight: 380, overflowY: "auto" }}>
             <table>
@@ -238,7 +335,7 @@ export default function DeepSpaceNetwork() {
                 </tr>
               </thead>
               <tbody>
-                {requests.map((r, i) => (
+                {visibleRequests.map((r, i) => (
                   <tr key={i}>
                     <td className="muted">{new Date(r.ts).toLocaleTimeString()}</td>
                     <td><code>{r.selector}</code></td>
@@ -250,7 +347,7 @@ export default function DeepSpaceNetwork() {
                     <td>
                       {r.correlationId ? (
                         <button className="btn ghost sm" onClick={() => setTraceId(r.correlationId)}>
-                          View trace
+                          View
                         </button>
                       ) : (
                         <span className="muted">—</span>
@@ -263,8 +360,6 @@ export default function DeepSpaceNetwork() {
           </div>
         )}
       </div>
-
-      <RequestScatter requests={requests} />
 
       <div className="grid cols-2">
         <div className="panel">
@@ -317,6 +412,8 @@ export default function DeepSpaceNetwork() {
         </p>
         {records.length === 0 ? (
           <p className="muted">No commands yet.</p>
+        ) : visibleRecords.length === 0 ? (
+          <p className="muted">All commands are hidden. Enable one above to see it here.</p>
         ) : (
           <div style={{ maxHeight: 420, overflowY: "auto" }}>
             <table>
@@ -333,7 +430,7 @@ export default function DeepSpaceNetwork() {
                 </tr>
               </thead>
               <tbody>
-                {records.map((r) => (
+                {visibleRecords.map((r) => (
                   <tr key={r.id}>
                     <td><code>{r.selector}</code></td>
                     <td>{r.expected_payload ?? <span className="cell-empty">—</span>}</td>
@@ -373,7 +470,7 @@ export default function DeepSpaceNetwork() {
         )}
       </div>
 
-      <CommandTimeline records={records} onOpenTrace={setTraceId} />
+      <CommandTimeline records={visibleRecords} onOpenTrace={setTraceId} />
 
       {traceId && <TraceDrawer correlationId={traceId} onClose={() => setTraceId(null)} />}
     </div>

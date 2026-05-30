@@ -6,6 +6,7 @@ const MODES = [
   { key: "throttle", label: "Bandwidth Throttle", hint: "HTTP 429 over the rate limit." },
   { key: "signal_delay", label: "Signal Delay", hint: "Adds 2 to 5s of latency." },
   { key: "incorrect_ordering", label: "Incorrect Ordering", hint: "Rejects stale sequence numbers." },
+  { key: "relay_timeout", label: "Relay Timeout", hint: "Mission Control gives up if the relay takes longer than timeout_ms to respond. Applies to the relay, not a station." },
 ];
 
 const STATIONS = ["all", "nasa", "esa", "jaxa"];
@@ -16,6 +17,8 @@ function defaultConfig(mode) {
       return { requests_per_second: 2, retry_after_ms: 1000 };
     case "signal_delay":
       return { min_ms: 2000, max_ms: 5000 };
+    case "relay_timeout":
+      return { timeout_ms: 3000 };
     default:
       return {};
   }

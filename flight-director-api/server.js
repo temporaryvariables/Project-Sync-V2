@@ -14,7 +14,7 @@ import pg from "pg";
 const PORT = process.env.PORT || 3002;
 const POCKETBASE_URL = normalizeUrl(process.env.POCKETBASE_URL, "http://localhost:8090");
 const STATIONS = ["nasa", "esa", "jaxa", "all"];
-const MODES = ["blackout", "throttle", "signal_delay", "incorrect_ordering"];
+const MODES = ["blackout", "throttle", "signal_delay", "incorrect_ordering", "relay_timeout"];
 
 // Accept service URLs with or without a scheme. A bare host like
 // "auth.example.com" becomes "https://auth.example.com", while explicit

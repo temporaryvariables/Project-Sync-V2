@@ -135,6 +135,7 @@ function emptyRun() {
     running: false,
     scenario: null,
     relayUrl: null,
+    relayTimeoutMs: 0, // 0 = no timeout (set from a relay_timeout chaos rule)
     startedAt: null,
     stoppedAt: null,
     sent: 0,
@@ -243,12 +244,19 @@ async function tick(teamId, token, scenarioKey) {
 
   // 2. Transmit to the student relay.
   const started = Date.now();
+  // If a relay_timeout chaos rule is active, Mission Control aborts the call
+  // once it takes too long instead of waiting forever.
+  const ac = new AbortController();
+  const timeoutMs = run.relayTimeoutMs || 0;
+  const timer = timeoutMs > 0 ? setTimeout(() => ac.abort(), timeoutMs) : null;
   try {
     const r = await fetch(`${run.relayUrl.replace(/\/$/, "")}/replicate`, {
       method: "POST",
       headers,
       body: JSON.stringify({ selector, payload, sequence_number }),
+      signal: ac.signal,
     });
+    if (timer) clearTimeout(timer);
     const latency = Date.now() - started;
     trace.push({
       ts: new Date(started).toISOString(),
@@ -265,7 +273,9 @@ async function tick(teamId, token, scenarioKey) {
     });
     recordResult(run, selector, payload, latency, r.status, r.ok, r.ok ? null : `relay returned ${r.status}`, correlationId);
   } catch (err) {
+    if (timer) clearTimeout(timer);
     const latency = Date.now() - started;
+    const timedOut = err.name === "AbortError";
     trace.push({
       ts: new Date(started).toISOString(),
       correlation_id: correlationId,
@@ -273,10 +283,12 @@ async function tick(teamId, token, scenarioKey) {
       step: "dsn.relay_transmit",
       selector,
       latency_ms: latency,
-      message: `Could not reach your relay at ${run.relayUrl}. Is it running and reachable from the internet?`,
-      meta: { relayUrl: run.relayUrl },
+      message: timedOut
+        ? `Mission Control gave up on ${selector}: the relay did not respond within ${timeoutMs} ms (relay timeout chaos).`
+        : `Could not reach your relay at ${run.relayUrl}. Is it running and reachable from the internet?`,
+      meta: { relayUrl: run.relayUrl, ...(timedOut ? { timeout_ms: timeoutMs } : {}) },
     });
-    recordResult(run, selector, payload, latency, 0, false, "relay unreachable", correlationId);
+    recordResult(run, selector, payload, latency, 0, false, timedOut ? "relay timeout" : "relay unreachable", correlationId);
   }
 
   flushTrace(token, trace);
@@ -324,6 +336,7 @@ function startRun(teamId, token, scenarioKey, relayUrl, overrides) {
     running: true,
     scenario: scenarioKey,
     relayUrl,
+    relayTimeoutMs: cfg.relayTimeoutMs || 0,
     startedAt: Date.now(),
     config: cfg,
   });
@@ -398,7 +411,7 @@ app.get("/scenarios", (_req, res) => {
   });
 });
 
-app.post("/start", (req, res) => {
+app.post("/start", async (req, res) => {
   const { scenario, relayUrl, config } = req.body || {};
   if (!SCENARIOS[scenario]) {
     return res.status(400).json({ error: `Unknown scenario. Choose from ${Object.keys(SCENARIOS).join(", ")}` });
@@ -410,15 +423,45 @@ app.post("/start", (req, res) => {
   if (run.running) {
     return res.status(409).json({ error: "A run is already in progress. Stop it first." });
   }
-  startRun(req.teamId, req.bearer, scenario, relayUrl, config || {});
+  // The "relay timeout" chaos rule lives in the flight director. Read it once at
+  // start: if enabled, Mission Control gives up on the relay after timeout_ms.
+  const relayTimeoutMs = await fetchRelayTimeout(req.bearer);
+  startRun(req.teamId, req.bearer, scenario, relayUrl, { ...(config || {}), relayTimeoutMs });
   res.json({ started: true, ...statusOf(getRun(req.teamId)) });
 });
+
+// Looks up an enabled relay_timeout chaos rule for this team and returns its
+// timeout in ms (0 when none). Best effort: never blocks a start on failure.
+async function fetchRelayTimeout(token) {
+  try {
+    const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    const r = await fetch(`${FLIGHT_DIRECTOR_URL}/chaos`, { headers: { Authorization: auth } });
+    if (!r.ok) return 0;
+    const data = await r.json();
+    const rule = (data.items || []).find((c) => c.enabled && c.mode === "relay_timeout");
+    const ms = rule ? Number(rule.config?.timeout_ms) : 0;
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  } catch {
+    return 0;
+  }
+}
 
 app.post("/stop", (req, res) => {
   const run = getRun(req.teamId);
   if (!run.running) return res.json({ stopped: true, ...statusOf(run) });
   stopRun(req.teamId);
   res.json({ stopped: true, ...statusOf(getRun(req.teamId)) });
+});
+
+// Clears this team's in-memory request timeline and counters. Used by the
+// dashboard's "Clear data" button. Refuses while a run is in progress.
+app.post("/clear", (req, res) => {
+  const run = getRun(req.teamId);
+  if (run.running) {
+    return res.status(409).json({ error: "Stop the transmission before clearing data." });
+  }
+  runs.set(req.teamId, emptyRun());
+  res.json({ cleared: true, ...statusOf(getRun(req.teamId)) });
 });
 
 app.get("/status", (req, res) => {

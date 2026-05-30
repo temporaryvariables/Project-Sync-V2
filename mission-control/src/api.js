@@ -66,6 +66,7 @@ export const deepSpaceNetwork = {
   scenarios: () => request(DEEP_SPACE_NETWORK_URL, "/scenarios"),
   start: (body) => request(DEEP_SPACE_NETWORK_URL, "/start", { method: "POST", body: JSON.stringify(body) }),
   stop: () => request(DEEP_SPACE_NETWORK_URL, "/stop", { method: "POST" }),
+  clear: () => request(DEEP_SPACE_NETWORK_URL, "/clear", { method: "POST" }),
   status: () => request(DEEP_SPACE_NETWORK_URL, "/status"),
   requests: (limit = 100) => request(DEEP_SPACE_NETWORK_URL, `/requests?limit=${limit}`),
 };
