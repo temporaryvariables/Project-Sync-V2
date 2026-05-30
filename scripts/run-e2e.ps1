@@ -23,12 +23,24 @@ function Start-Service($dir, $port, $extraEnv) {
   return $p
 }
 
+# Starts a standalone script (not a service folder), used for the reference relay.
+function Start-Script($scriptPath, $port, $extraEnv) {
+  $env:AUTH_BYPASS = "true"
+  $env:PORT = "$port"
+  foreach ($kv in $extraEnv.GetEnumerator()) { Set-Item "env:$($kv.Key)" $kv.Value }
+  $p = Start-Process -FilePath "node" -ArgumentList "$root\$scriptPath" -PassThru -WindowStyle Hidden
+  Write-Host "started $scriptPath (pid $($p.Id)) on port $port"
+  return $p
+}
+
 try {
   Write-Host "=== Starting services ===" -ForegroundColor Cyan
   $procs += Start-Service "ground-station-api"  3001 @{ DATABASE_URL = $DatabaseUrl }
   $procs += Start-Service "flight-director-api" 3002 @{ DATABASE_URL = $DatabaseUrl }
   $procs += Start-Service "deep-space-network"  3003 @{ GROUND_STATION_URL = "http://localhost:3001" }
-  $procs += Start-Service "rover-relay-starter" 4000 @{ GROUND_STATION_URL = "http://localhost:3001" }
+  # The student starter is an empty scaffold, so the harness uses a complete
+  # reference relay to exercise the full replication pipeline.
+  $procs += Start-Script "scripts\reference-relay.mjs" 4000 @{ GROUND_STATION_URL = "http://localhost:3001" }
 
   Write-Host "waiting for services to come up..." -ForegroundColor Yellow
   Start-Sleep -Seconds 3

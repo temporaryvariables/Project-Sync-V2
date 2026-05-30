@@ -1,23 +1,29 @@
-const STARTER_SNIPPET = `// rover-relay-starter — the naive version you will improve
+const STARTER_SNIPPET = `// rover-relay-starter — an empty scaffold. The forwarding is YOUR job.
 app.post("/replicate", async (req, res) => {
-  const { selector, payload, sequence_number } = req.body;
-  const auth = req.headers.authorization;
-  const results = {};
+  const { selector, payload, sequence_number } = req.body || {};
 
-  // Sequential, no retries, no parallelism. Breaks under chaos.
-  for (const station of ["nasa", "esa", "jaxa"]) {
-    const r = await fetch(
-      \`\${GROUND_STATION_URL}/groundstation/\${station}/\${selector}\`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: auth },
-        body: JSON.stringify({ payload, sequence_number }),
-      }
-    );
-    results[station] = r.status;
-  }
+  // Pass these straight through on every station call you make.
+  const auth = req.headers.authorization || "";
+  const correlationId = req.headers["x-correlation-id"] || "";
 
-  res.json({ selector, relayed: results });
+  // One example log line so you can see your story in the trace.
+  missionLog(auth, correlationId, {
+    level: "info",
+    step: "relay.received",
+    selector,
+    message: \`Relay received \${selector} — implement forwarding next.\`,
+    properties: { payload, sequence_number },
+  });
+
+  // TODO (your mission): forward to NASA, ESA and JAXA, e.g.
+  //   PUT \`\${GROUND_STATION_URL}/groundstation/<station>/\${selector}\`
+  //   headers: Authorization: auth, X-Correlation-Id: correlationId
+  //   body:    { payload, sequence_number }
+  // Start simple, then add retries, parallelism, Retry-After and
+  // sequence-number safeguards to survive chaos.
+
+  // For now, just acknowledge. Replace this with your real logic.
+  res.status(200).end();
 });`;
 
 const AUTH_SNIPPET = `// The Deep Space Network forwards a PocketBase Bearer token.
@@ -101,8 +107,9 @@ export default function Guide() {
         <div className="panel">
           <h2>Starter code</h2>
           <p className="muted">
-            You begin with <span className="inline-code">rover-relay-starter</span>. It works when conditions are
-            perfect and falls apart under chaos. Fork it and make it survive.
+            You begin with <span className="inline-code">rover-relay-starter</span>. It's an empty scaffold: it
+            acknowledges each command and logs one line, but doesn't talk to the stations yet. Fork it and build
+            the forwarding so all three stay in sync under chaos.
           </p>
           <pre><code>{STARTER_SNIPPET}</code></pre>
         </div>
