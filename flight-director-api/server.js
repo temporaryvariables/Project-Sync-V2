@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS chaos_rules (
 CREATE INDEX IF NOT EXISTS idx_chaos_rules_enabled
     ON chaos_rules (enabled);
 
+DROP TABLE IF EXISTS crew_members;
 CREATE TABLE IF NOT EXISTS crew_members (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name       TEXT NOT NULL UNIQUE,
@@ -569,7 +570,7 @@ app.get("/crew", async (req, res) => {
     res.json({ count: rows.length, max: MAX_CREW, items: rows, user_id: req.userId, role: req.role });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   }
 });
 
@@ -599,7 +600,7 @@ app.get("/crew/:id", async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   }
 });
 
@@ -679,7 +680,7 @@ app.put("/crew", async (req, res) => {
       return res.status(409).json({ error: msg });
     }
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   } finally {
     client.release();
   }
@@ -739,7 +740,7 @@ app.patch("/crew/:id", async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   }
 });
 
@@ -758,7 +759,7 @@ app.delete("/crew/:id", async (req, res) => {
     res.json({ deleted: true, id: current.rows[0].id, name: current.rows[0].name });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   }
 });
 
@@ -772,7 +773,7 @@ app.delete("/crew", async (req, res) => {
     res.json({ deleted: true, count: rowCount });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error", detail: err.message });
   }
 });
 
