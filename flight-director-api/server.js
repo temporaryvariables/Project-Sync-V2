@@ -94,8 +94,12 @@ CREATE TABLE IF NOT EXISTS crew_members (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name       TEXT NOT NULL UNIQUE,
     color      TEXT NOT NULL DEFAULT '#38bdf8',
+    message    TEXT,
+    seat       INT  NOT NULL,
+    created_by TEXT NOT NULL,
     version    INT  NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (seat)
 );
 `;
 
@@ -167,6 +171,7 @@ async function authenticate(req, res, next) {
   if (process.env.AUTH_BYPASS === "true") {
     req.teamId = token || "local-team";
     req.userId = "dev-user";
+    req.role = "admin";
     return next();
   }
 
@@ -182,6 +187,7 @@ async function authenticate(req, res, next) {
     if (!teamId) return res.status(403).json({ error: "Your account is not assigned to a team" });
     req.teamId = teamId;
     req.userId = data.record.id;
+    req.role = (data.record.role || "read").toLowerCase();
     next();
   } catch (err) {
     console.error("auth error", err);
@@ -535,27 +541,32 @@ app.post("/logs/reset", async (req, res) => {
 // =============================================================================
 // A single shared roster visible to everyone. Chaos behaviors are triggered by
 // special name prefixes: blackout*, throttle*, delay<N>.
+// Seat 0 = pilot (admin-only). Seats 1-20 = crew.
 
-const MAX_CREW = 10;
-const NAME_RE = /^[a-zA-Z0-9]{1,12}$/;
+const MAX_CREW = 21; // 1 pilot + 20 crew
+const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9 ]{0,10}[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 
 // Throttle gate: only one throttle-named member may be created every 5 seconds.
 let lastThrottleCreate = 0;
 
-// Validate name: alphanumeric, 1-12 chars.
-function validateName(name) {
-  if (!name || typeof name !== "string") return "name is required";
-  if (!NAME_RE.test(name)) return "name must be 1-12 alphanumeric characters only";
-  return null;
+// Validate name: alphanumeric + spaces (no leading/trailing spaces), 1-12 chars.
+function validateName(raw) {
+  if (!raw || typeof raw !== "string") return { error: "name is required" };
+  const name = raw.trim();
+  if (!name) return { error: "name cannot be blank" };
+  if (name.length > 12) return { error: "name must be at most 12 characters" };
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9 ]*[a-zA-Z0-9]$/.test(name) && !/^[a-zA-Z0-9]$/.test(name))
+    return { error: "name must be alphanumeric (spaces allowed between characters, no leading/trailing spaces)" };
+  return { name };
 }
 
 // GET /crew — list all members
 app.get("/crew", async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, color, version, created_at FROM crew_members ORDER BY created_at`
+      `SELECT id, name, color, message, seat, created_by, version, created_at FROM crew_members ORDER BY seat`
     );
-    res.json({ count: rows.length, max: MAX_CREW, items: rows });
+    res.json({ count: rows.length, max: MAX_CREW, items: rows, user_id: req.userId, role: req.role });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal error" });
@@ -566,21 +577,22 @@ app.get("/crew", async (req, res) => {
 app.get("/crew/:id", async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, color, version, created_at FROM crew_members WHERE id = $1`,
+      `SELECT id, name, color, message, seat, created_by, version, created_at FROM crew_members WHERE id = $1`,
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: "Crew member not found" });
-    // Chaos: blackout — reading a blackout member fails
-    if (rows[0].name.toLowerCase().startsWith("blackout")) {
+    const lowerName = rows[0].name.toLowerCase();
+    // Chaos: blackout
+    if (lowerName.startsWith("blackout")) {
       return res.status(500).json({ error: `Crew member ${rows[0].name} is lost in deep space — no signal` });
     }
-    // Chaos: delay — artificial latency
-    const delayMatch = rows[0].name.toLowerCase().match(/^delay(\d+)/);
+    // Chaos: delay
+    const delayMatch = lowerName.match(/^delay(\d+)/);
     if (delayMatch) {
       const delaySec = parseInt(delayMatch[1], 10);
       if (delaySec >= 5) {
         await new Promise((r) => setTimeout(r, 5000));
-        return res.status(504).json({ error: `Signal lost — response for ${rows[0].name} took too long (>${5}s timeout)` });
+        return res.status(504).json({ error: `Signal lost — response for ${rows[0].name} took too long (>5s timeout)` });
       }
       await new Promise((r) => setTimeout(r, delaySec * 1000));
     }
@@ -593,10 +605,18 @@ app.get("/crew/:id", async (req, res) => {
 
 // PUT /crew — create a new member
 app.put("/crew", async (req, res) => {
-  const { name, color } = req.body || {};
-  const nameErr = validateName(name);
-  if (nameErr) return res.status(400).json({ error: nameErr });
+  const { color, seat } = req.body || {};
+  const v = validateName(req.body?.name);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const name = v.name;
   if (!color || typeof color !== "string") return res.status(400).json({ error: "color is required" });
+  if (seat === undefined || seat === null || !Number.isInteger(seat) || seat < 0 || seat >= MAX_CREW)
+    return res.status(400).json({ error: `seat must be an integer from 0 to ${MAX_CREW - 1}` });
+
+  // Seat 0 = pilot — admin only
+  if (seat === 0 && req.role !== "admin") {
+    return res.status(403).json({ error: "Only an admin can assign the pilot seat." });
+  }
 
   const lowerName = name.toLowerCase();
 
@@ -627,41 +647,36 @@ app.put("/crew", async (req, res) => {
     if (delaySec >= 5) {
       await new Promise((r) => setTimeout(r, 5000));
       return res.status(504).json({
-        error: `Signal lost — adding ${name} took too long (>${5}s timeout). The member was not added.`,
+        error: `Signal lost — adding ${name} took too long (>5s timeout). The member was not added.`,
       });
     }
     await new Promise((r) => setTimeout(r, delaySec * 1000));
   }
 
-  // Use a transaction with advisory lock to safely enforce the 10-member cap.
+  // Transaction to enforce the cap and seat uniqueness.
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // Lock the crew_members table to prevent concurrent inserts racing past the cap.
-    const countResult = await client.query(
-      `SELECT count(*)::int AS total FROM crew_members`
-    );
+    const countResult = await client.query(`SELECT count(*)::int AS total FROM crew_members`);
     if (countResult.rows[0].total >= MAX_CREW) {
       await client.query("ROLLBACK");
-      return res.status(403).json({
-        error: `Crew is at capacity (${MAX_CREW} members). Remove someone first.`,
-        max: MAX_CREW,
-      });
+      return res.status(403).json({ error: `Crew is at capacity (${MAX_CREW} seats). Remove someone first.`, max: MAX_CREW });
     }
     const { rows } = await client.query(
-      `INSERT INTO crew_members (name, color) VALUES ($1, $2)
-       RETURNING id, name, color, version, created_at`,
-      [name, color]
+      `INSERT INTO crew_members (name, color, seat, created_by) VALUES ($1, $2, $3, $4)
+       RETURNING id, name, color, message, seat, created_by, version, created_at`,
+      [name, color, seat, req.userId]
     );
     await client.query("COMMIT");
-    // Update throttle timestamp after successful insert.
     if (lowerName.includes("throttle")) lastThrottleCreate = Date.now();
     res.status(201).json(rows[0]);
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
-    // Unique violation → 409 Conflict
     if (err.code === "23505") {
-      return res.status(409).json({ error: `A crew member named "${name}" already exists.` });
+      const msg = err.constraint?.includes("seat")
+        ? `Seat ${seat} is already taken.`
+        : `A crew member named "${name}" already exists.`;
+      return res.status(409).json({ error: msg });
     }
     console.error(err);
     res.status(500).json({ error: "Internal error" });
@@ -670,31 +685,30 @@ app.put("/crew", async (req, res) => {
   }
 });
 
-// PATCH /crew/:id — update a member (optimistic concurrency via version)
+// PATCH /crew/:id — update color/message only (no name/seat changes).
+// Requires version for optimistic concurrency. Owner or admin only.
 app.patch("/crew/:id", async (req, res) => {
-  const { name, color, version } = req.body || {};
-  if (version === undefined || version === null) {
+  const { color, message, version } = req.body || {};
+  if (version === undefined || version === null)
     return res.status(400).json({ error: "version is required for optimistic concurrency" });
-  }
-  if (name !== undefined) {
-    const nameErr = validateName(name);
-    if (nameErr) return res.status(400).json({ error: nameErr });
-  }
 
   try {
-    // First check the member exists and read current version.
     const current = await pool.query(
-      `SELECT id, name, version FROM crew_members WHERE id = $1`,
+      `SELECT id, name, created_by, version FROM crew_members WHERE id = $1`,
       [req.params.id]
     );
     if (!current.rows[0]) return res.status(404).json({ error: "Crew member not found" });
 
-    // Chaos: blackout — can't update a blackout member
+    // Ownership check: creator or admin
+    if (current.rows[0].created_by !== req.userId && req.role !== "admin") {
+      return res.status(403).json({ error: "You can only edit crew members you created (or be an admin)." });
+    }
+
+    // Chaos: blackout
     if (current.rows[0].name.toLowerCase().startsWith("blackout")) {
       return res.status(500).json({ error: `Crew member ${current.rows[0].name} is lost in deep space — no signal` });
     }
-
-    // Chaos: delay on current name
+    // Chaos: delay
     const delayMatch = current.rows[0].name.toLowerCase().match(/^delay(\d+)/);
     if (delayMatch) {
       const delaySec = parseInt(delayMatch[1], 10);
@@ -705,51 +719,54 @@ app.patch("/crew/:id", async (req, res) => {
       await new Promise((r) => setTimeout(r, delaySec * 1000));
     }
 
-    // Optimistic concurrency check
+    // Optimistic concurrency
     const { rows } = await pool.query(
       `UPDATE crew_members SET
-         name    = COALESCE($2, name),
-         color   = COALESCE($3, color),
+         color   = COALESCE($2, color),
+         message = CASE WHEN $3::text IS NOT NULL THEN $3 ELSE message END,
          version = version + 1
        WHERE id = $1 AND version = $4
-       RETURNING id, name, color, version, created_at`,
-      [req.params.id, name ?? null, color ?? null, version]
+       RETURNING id, name, color, message, seat, created_by, version, created_at`,
+      [req.params.id, color ?? null, message !== undefined ? message : null, version]
     );
     if (!rows[0]) {
-      // Version mismatch — refetch the current version for the caller
       const fresh = await pool.query(`SELECT version FROM crew_members WHERE id = $1`, [req.params.id]);
       return res.status(409).json({
-        error: `Version conflict — you sent version ${version} but the current version is ${fresh.rows[0]?.version}. Re-fetch and try again.`,
+        error: `Version conflict — you sent version ${version} but current is ${fresh.rows[0]?.version}. Re-fetch and try again.`,
         current_version: fresh.rows[0]?.version,
       });
     }
     res.json(rows[0]);
   } catch (err) {
-    if (err.code === "23505") {
-      return res.status(409).json({ error: `A crew member with that name already exists.` });
-    }
     console.error(err);
     res.status(500).json({ error: "Internal error" });
   }
 });
 
-// DELETE /crew/:id — remove a member
+// DELETE /crew/:id — remove a member. Owner or admin only.
 app.delete("/crew/:id", async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `DELETE FROM crew_members WHERE id = $1 RETURNING id, name`,
+    const current = await pool.query(
+      `SELECT id, name, created_by FROM crew_members WHERE id = $1`,
       [req.params.id]
     );
-    if (!rows[0]) return res.status(404).json({ error: "Crew member not found" });
-    res.json({ deleted: true, id: rows[0].id, name: rows[0].name });
+    if (!current.rows[0]) return res.status(404).json({ error: "Crew member not found" });
+    if (current.rows[0].created_by !== req.userId && req.role !== "admin") {
+      return res.status(403).json({ error: "You can only remove crew members you created (or be an admin)." });
+    }
+    await pool.query(`DELETE FROM crew_members WHERE id = $1`, [req.params.id]);
+    res.json({ deleted: true, id: current.rows[0].id, name: current.rows[0].name });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal error" });
   }
 });
 
-// DELETE /crew — remove all members
+// DELETE /crew — remove all members (admin only)
 app.delete("/crew", async (req, res) => {
+  if (req.role !== "admin") {
+    return res.status(403).json({ error: "Only an admin can clear the entire crew." });
+  }
   try {
     const { rowCount } = await pool.query(`DELETE FROM crew_members`);
     res.json({ deleted: true, count: rowCount });

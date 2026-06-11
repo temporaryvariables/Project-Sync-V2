@@ -950,14 +950,14 @@ ul.clean li {
 }
 .ship-nose {
   width: 0; height: 0;
-  border-left: 60px solid transparent;
-  border-right: 60px solid transparent;
-  border-bottom: 40px solid var(--panel-2);
+  border-left: 80px solid transparent;
+  border-right: 80px solid transparent;
+  border-bottom: 44px solid var(--panel-2);
   position: relative;
 }
 .ship-nose::after {
   content: ""; position: absolute;
-  left: -40px; right: -40px; top: 30px; height: 10px;
+  left: -60px; right: -60px; top: 34px; height: 10px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   opacity: 0.4; border-radius: 50%;
 }
@@ -965,37 +965,96 @@ ul.clean li {
   background: linear-gradient(180deg, var(--panel-2), var(--bg-2));
   border: 1px solid var(--border);
   border-top: none;
-  border-radius: 0 0 20px 20px;
-  padding: 20px 16px;
-  min-width: 300px;
+  border-radius: 0 0 24px 24px;
+  padding: 16px 20px 20px;
+  min-width: 360px;
+}
+.ship-pilot-row {
+  display: flex; justify-content: center;
+  margin-bottom: 12px; padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
 }
 .ship-window-row {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 10px;
+  margin-bottom: 8px;
 }
 .ship-seat {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
+  cursor: pointer; position: relative;
 }
+.ship-seat:hover .seat-avatar { transform: scale(1.1); }
 .seat-avatar {
   width: 38px; height: 38px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 16px; color: #fff;
   box-shadow: 0 0 12px rgba(56,189,248,0.3);
-  transition: transform 0.2s;
+  transition: transform 0.15s;
 }
-.ship-seat.occupied .seat-avatar:hover { transform: scale(1.15); }
 .empty-avatar {
   background: var(--border) !important;
   color: var(--muted); font-size: 14px;
   box-shadow: none; opacity: 0.4;
 }
+.pilot-avatar {
+  width: 48px; height: 48px;
+  font-size: 22px;
+  box-shadow: 0 0 18px rgba(251,191,36,0.5);
+  border: 2px solid var(--amber);
+}
+.ship-seat.pilot .empty-avatar {
+  border: 2px dashed var(--amber); opacity: 0.6;
+  box-shadow: none;
+}
 .seat-name {
   font-size: 10px; color: var(--muted);
-  max-width: 50px; text-align: center;
+  max-width: 60px; text-align: center;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* Speech bubble */
+.seat-bubble {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%; transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 10px; color: var(--text);
+  white-space: nowrap; max-width: 120px;
+  overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 2;
+}
+.seat-bubble::after {
+  content: "";
+  position: absolute; top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--border);
+}
+
+/* Seat popover */
+.seat-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%; transform: translateX(-50%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  min-width: 200px;
+  z-index: 10;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.seat-popover-title {
+  font-weight: 700; font-size: 13px;
+  margin-bottom: 8px;
+}
+
 .ship-engines {
   display: flex; gap: 12px; justify-content: center;
   padding-top: 2px;
@@ -1007,8 +1066,8 @@ ul.clean li {
   animation: flicker 0.4s ease-in-out infinite alternate;
 }
 @keyframes flicker {
-  0% { opacity: 0.6; height: 25px; }
-  100% { opacity: 1; height: 34px; }
+  0%   { opacity: 0.6; }
+  100% { opacity: 1; }
 }
 
 /* --- Controls --- */
