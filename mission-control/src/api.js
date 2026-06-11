@@ -70,3 +70,30 @@ export const deepSpaceNetwork = {
   status: () => request(DEEP_SPACE_NETWORK_URL, "/status"),
   requests: (limit = 100) => request(DEEP_SPACE_NETWORK_URL, `/requests?limit=${limit}`),
 };
+
+// --- crew members (Learn tab) ------------------------------------------------
+// A raw fetch that returns full response info (status, body) even on errors,
+// so the Learn tab can display the HTTP details to students.
+async function rawCrew(path, options = {}) {
+  const res = await fetch(`${FLIGHT_DIRECTOR_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token()}`,
+      ...(options.headers || {}),
+    },
+  });
+  const text = await res.text();
+  let body;
+  try { body = JSON.parse(text); } catch { body = text; }
+  return { status: res.status, statusText: res.statusText, body };
+}
+
+export const crew = {
+  list:   ()           => rawCrew("/crew"),
+  get:    (id)         => rawCrew(`/crew/${id}`),
+  create: (body)       => rawCrew("/crew", { method: "PUT",    body: JSON.stringify(body) }),
+  update: (id, body)   => rawCrew(`/crew/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  remove: (id)         => rawCrew(`/crew/${id}`, { method: "DELETE" }),
+  clear:  ()           => rawCrew("/crew",       { method: "DELETE" }),
+};

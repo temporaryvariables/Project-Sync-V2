@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS chaos_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_chaos_rules_enabled
     ON chaos_rules (enabled);
+
+CREATE TABLE IF NOT EXISTS crew_members (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       TEXT NOT NULL UNIQUE,
+    color      TEXT NOT NULL DEFAULT '#38bdf8',
+    version    INT  NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 // Creates the schema if it does not exist yet. Safe to call repeatedly.
@@ -220,12 +228,19 @@ app.post("/reset", async (req, res) => {
       );
       chaosDeleted = chaos.rowCount;
     }
+    // Clear the global crew roster (Learn tab).
+    let crewDeleted = 0;
+    try {
+      const crew = await pool.query(`DELETE FROM crew_members`);
+      crewDeleted = crew.rowCount;
+    } catch { /* table may not exist yet */ }
     res.json({
       reset: true,
       team_id: req.teamId,
       records_deleted: records.rowCount,
       chaos_rules_deleted: chaosDeleted,
       logs_deleted: logsDeleted,
+      crew_deleted: crewDeleted,
     });
   } catch (err) {
     console.error(err);
@@ -509,6 +524,235 @@ app.post("/logs/reset", async (req, res) => {
     await ensureLogsSchema();
     const r = await logsPool.query(`DELETE FROM request_logs WHERE team_id = $1`, [req.teamId]);
     res.json({ reset: true, team_id: req.teamId, logs_deleted: r.rowCount });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// =============================================================================
+// Crew Members — Learn tab (global, shared by all students)
+// =============================================================================
+// A single shared roster visible to everyone. Chaos behaviors are triggered by
+// special name prefixes: blackout*, throttle*, delay<N>.
+
+const MAX_CREW = 10;
+const NAME_RE = /^[a-zA-Z0-9]{1,12}$/;
+
+// Throttle gate: only one throttle-named member may be created every 5 seconds.
+let lastThrottleCreate = 0;
+
+// Validate name: alphanumeric, 1-12 chars.
+function validateName(name) {
+  if (!name || typeof name !== "string") return "name is required";
+  if (!NAME_RE.test(name)) return "name must be 1-12 alphanumeric characters only";
+  return null;
+}
+
+// GET /crew — list all members
+app.get("/crew", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, color, version, created_at FROM crew_members ORDER BY created_at`
+    );
+    res.json({ count: rows.length, max: MAX_CREW, items: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// GET /crew/:id — single member
+app.get("/crew/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, color, version, created_at FROM crew_members WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Crew member not found" });
+    // Chaos: blackout — reading a blackout member fails
+    if (rows[0].name.toLowerCase().startsWith("blackout")) {
+      return res.status(500).json({ error: `Crew member ${rows[0].name} is lost in deep space — no signal` });
+    }
+    // Chaos: delay — artificial latency
+    const delayMatch = rows[0].name.toLowerCase().match(/^delay(\d+)/);
+    if (delayMatch) {
+      const delaySec = parseInt(delayMatch[1], 10);
+      if (delaySec >= 5) {
+        await new Promise((r) => setTimeout(r, 5000));
+        return res.status(504).json({ error: `Signal lost — response for ${rows[0].name} took too long (>${5}s timeout)` });
+      }
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// PUT /crew — create a new member
+app.put("/crew", async (req, res) => {
+  const { name, color } = req.body || {};
+  const nameErr = validateName(name);
+  if (nameErr) return res.status(400).json({ error: nameErr });
+  if (!color || typeof color !== "string") return res.status(400).json({ error: "color is required" });
+
+  const lowerName = name.toLowerCase();
+
+  // Chaos: blackout — member is never created
+  if (lowerName.startsWith("blackout")) {
+    return res.status(500).json({
+      error: `Crew member ${name} is lost in deep space — no signal. The member was never added.`,
+    });
+  }
+
+  // Chaos: throttle — rate limit to 1 throttle-named member per 5 seconds
+  if (lowerName.includes("throttle")) {
+    const now = Date.now();
+    const elapsed = now - lastThrottleCreate;
+    if (elapsed < 5000) {
+      const waitMs = 5000 - elapsed;
+      return res.status(429).json({
+        error: `Throttled — only one throttle-named member may be added every 5 seconds.`,
+        retry_after_ms: waitMs,
+      });
+    }
+  }
+
+  // Chaos: delay — artificial latency with 5s server-side timeout
+  const delayMatch = lowerName.match(/^delay(\d+)/);
+  if (delayMatch) {
+    const delaySec = parseInt(delayMatch[1], 10);
+    if (delaySec >= 5) {
+      await new Promise((r) => setTimeout(r, 5000));
+      return res.status(504).json({
+        error: `Signal lost — adding ${name} took too long (>${5}s timeout). The member was not added.`,
+      });
+    }
+    await new Promise((r) => setTimeout(r, delaySec * 1000));
+  }
+
+  // Use a transaction with advisory lock to safely enforce the 10-member cap.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // Lock the crew_members table to prevent concurrent inserts racing past the cap.
+    const countResult = await client.query(
+      `SELECT count(*)::int AS total FROM crew_members`
+    );
+    if (countResult.rows[0].total >= MAX_CREW) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({
+        error: `Crew is at capacity (${MAX_CREW} members). Remove someone first.`,
+        max: MAX_CREW,
+      });
+    }
+    const { rows } = await client.query(
+      `INSERT INTO crew_members (name, color) VALUES ($1, $2)
+       RETURNING id, name, color, version, created_at`,
+      [name, color]
+    );
+    await client.query("COMMIT");
+    // Update throttle timestamp after successful insert.
+    if (lowerName.includes("throttle")) lastThrottleCreate = Date.now();
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    // Unique violation → 409 Conflict
+    if (err.code === "23505") {
+      return res.status(409).json({ error: `A crew member named "${name}" already exists.` });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  } finally {
+    client.release();
+  }
+});
+
+// PATCH /crew/:id — update a member (optimistic concurrency via version)
+app.patch("/crew/:id", async (req, res) => {
+  const { name, color, version } = req.body || {};
+  if (version === undefined || version === null) {
+    return res.status(400).json({ error: "version is required for optimistic concurrency" });
+  }
+  if (name !== undefined) {
+    const nameErr = validateName(name);
+    if (nameErr) return res.status(400).json({ error: nameErr });
+  }
+
+  try {
+    // First check the member exists and read current version.
+    const current = await pool.query(
+      `SELECT id, name, version FROM crew_members WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!current.rows[0]) return res.status(404).json({ error: "Crew member not found" });
+
+    // Chaos: blackout — can't update a blackout member
+    if (current.rows[0].name.toLowerCase().startsWith("blackout")) {
+      return res.status(500).json({ error: `Crew member ${current.rows[0].name} is lost in deep space — no signal` });
+    }
+
+    // Chaos: delay on current name
+    const delayMatch = current.rows[0].name.toLowerCase().match(/^delay(\d+)/);
+    if (delayMatch) {
+      const delaySec = parseInt(delayMatch[1], 10);
+      if (delaySec >= 5) {
+        await new Promise((r) => setTimeout(r, 5000));
+        return res.status(504).json({ error: `Signal lost — updating ${current.rows[0].name} took too long` });
+      }
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
+    }
+
+    // Optimistic concurrency check
+    const { rows } = await pool.query(
+      `UPDATE crew_members SET
+         name    = COALESCE($2, name),
+         color   = COALESCE($3, color),
+         version = version + 1
+       WHERE id = $1 AND version = $4
+       RETURNING id, name, color, version, created_at`,
+      [req.params.id, name ?? null, color ?? null, version]
+    );
+    if (!rows[0]) {
+      // Version mismatch — refetch the current version for the caller
+      const fresh = await pool.query(`SELECT version FROM crew_members WHERE id = $1`, [req.params.id]);
+      return res.status(409).json({
+        error: `Version conflict — you sent version ${version} but the current version is ${fresh.rows[0]?.version}. Re-fetch and try again.`,
+        current_version: fresh.rows[0]?.version,
+      });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === "23505") {
+      return res.status(409).json({ error: `A crew member with that name already exists.` });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// DELETE /crew/:id — remove a member
+app.delete("/crew/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM crew_members WHERE id = $1 RETURNING id, name`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Crew member not found" });
+    res.json({ deleted: true, id: rows[0].id, name: rows[0].name });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  }
+});
+
+// DELETE /crew — remove all members
+app.delete("/crew", async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM crew_members`);
+    res.json({ deleted: true, count: rowCount });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal error" });

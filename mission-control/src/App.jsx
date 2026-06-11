@@ -4,22 +4,24 @@ import Login from "./components/Login";
 import RelaySettings from "./components/RelaySettings";
 import Guide from "./tabs/Guide";
 import ApiReference from "./tabs/ApiReference";
+import Learn from "./tabs/Learn";
 import DeepSpaceNetwork from "./tabs/DeepSpaceNetwork";
 import Admin from "./tabs/Admin";
 
 const TABS = [
   { key: "guide", label: "Guide", Component: Guide },
   { key: "api", label: "API Reference", Component: ApiReference },
+  { key: "learn", label: "Learn", Component: Learn },
   { key: "dsn", label: "Deep Space Network", Component: DeepSpaceNetwork },
   { key: "admin", label: "Admin", Component: Admin },
 ];
 
-// Which tabs each role is allowed to see. Guide and API Reference are always
-// available; the Deep Space Network and Admin tabs are gated by role.
+// Which tabs each role is allowed to see. Guide, API Reference, and Learn are
+// always available; the Deep Space Network and Admin tabs are gated by role.
 const ROLE_TABS = {
-  admin: ["guide", "api", "dsn", "admin"],
-  run: ["guide", "api", "dsn"],
-  read: ["guide", "api"],
+  admin: ["guide", "api", "learn", "dsn", "admin"],
+  run: ["guide", "api", "learn", "dsn"],
+  read: ["guide", "api", "learn"],
 };
 
 export default function App() {
