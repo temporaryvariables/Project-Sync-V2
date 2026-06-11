@@ -75,18 +75,24 @@ export const deepSpaceNetwork = {
 // A raw fetch that returns full response info (status, body) even on errors,
 // so the Learn tab can display the HTTP details to students.
 async function rawCrew(path, options = {}) {
-  const res = await fetch(`${FLIGHT_DIRECTOR_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token()}`,
-      ...(options.headers || {}),
-    },
-  });
-  const text = await res.text();
-  let body;
-  try { body = JSON.parse(text); } catch { body = text; }
-  return { status: res.status, statusText: res.statusText, body };
+  try {
+    const res = await fetch(`${FLIGHT_DIRECTOR_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token()}`,
+        ...(options.headers || {}),
+      },
+    });
+    const text = await res.text();
+    let body;
+    try { body = JSON.parse(text); } catch { body = text; }
+    return { status: res.status, statusText: res.statusText, body };
+  } catch (err) {
+    // Network error / browser timeout — return a synthetic error response so
+    // the UI still updates the response panel and re-enables controls.
+    return { status: 0, statusText: "Network Error", body: { error: err.message } };
+  }
 }
 
 export const crew = {

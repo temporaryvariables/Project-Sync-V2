@@ -298,11 +298,6 @@ export default function Learn() {
               <td><span className="crew-status" style={{ color: "var(--amber)" }}>409</span></td>
             </tr>
             <tr>
-              <td><em>stale version</em></td>
-              <td className="muted">PATCH with wrong version = conflict</td>
-              <td><span className="crew-status" style={{ color: "var(--amber)" }}>409</span></td>
-            </tr>
-            <tr>
               <td><em>seat 0</em></td>
               <td className="muted">Pilot seat. Admin only.</td>
               <td><span className="crew-status" style={{ color: "var(--amber)" }}>403</span></td>

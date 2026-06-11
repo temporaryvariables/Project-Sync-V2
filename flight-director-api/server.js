@@ -641,20 +641,13 @@ app.put("/crew", async (req, res) => {
     }
   }
 
-  // Chaos: delay — artificial latency with 5s server-side timeout
+  // Parse delay from name BEFORE insert (we need to know, but apply AFTER).
   const delayMatch = lowerName.match(/^delay(\d+)/);
-  if (delayMatch) {
-    const delaySec = parseInt(delayMatch[1], 10);
-    if (delaySec >= 5) {
-      await new Promise((r) => setTimeout(r, 5000));
-      return res.status(504).json({
-        error: `Signal lost — adding ${name} took too long (>5s timeout). The member was not added.`,
-      });
-    }
-    await new Promise((r) => setTimeout(r, delaySec * 1000));
-  }
+  const delaySec = delayMatch ? parseInt(delayMatch[1], 10) : 0;
 
   // Transaction to enforce the cap and seat uniqueness.
+  // INSERT happens FIRST so the member exists in the DB even if the response
+  // times out — students can refresh and see the member was actually added.
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -670,6 +663,20 @@ app.put("/crew", async (req, res) => {
     );
     await client.query("COMMIT");
     if (lowerName.includes("throttle")) lastThrottleCreate = Date.now();
+
+    // Chaos: delay — applied AFTER the insert so the member is in the DB.
+    // If delay >= 5s, wait 5s and return 504. The member IS saved; refreshing
+    // will reveal it. This teaches students that a timeout doesn't mean failure.
+    if (delaySec > 0) {
+      if (delaySec >= 5) {
+        await new Promise((r) => setTimeout(r, 5000));
+        return res.status(504).json({
+          error: `Signal lost — adding ${name} took too long (>5s timeout). But the member WAS saved — refresh to see.`,
+        });
+      }
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
+    }
+
     res.status(201).json(rows[0]);
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
