@@ -55,12 +55,14 @@ function SeatPopover({ seatIdx, member, onClose, onAdd, onUpdate, onDelete, busy
         <div className="seat-popover-title">Seat {seatIdx}{seatIdx === 0 ? " (Pilot)" : ""}</div>
         <input className="crew-input sm" placeholder="Name" value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && name.trim() && onAdd(seatIdx, name, color)} />
+          onKeyDown={(e) => e.key === "Enter" && name.trim() && onAdd(seatIdx, name, color, message)} />
+        <input className="crew-input sm" placeholder="Message (optional)" value={message}
+          onChange={(e) => setMessage(e.target.value)} style={{ marginTop: 4 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
           <input type="color" className="crew-color" value={color} onChange={(e) => setColor(e.target.value)}
             style={{ width: 24, height: 24 }} />
           <button className="btn sm" disabled={busy || !name.trim()}
-            onClick={() => onAdd(seatIdx, name, color)}>Add</button>
+            onClick={() => onAdd(seatIdx, name, color, message)}>Add</button>
         </div>
       </div>
     );
@@ -151,9 +153,11 @@ export default function Learn() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [refreshMs, fetchCrew]);
 
-  const handleAdd = async (seat, name, color) => {
+  const handleAdd = async (seat, name, color, message) => {
     setBusy(true);
-    const r = await crew.create({ name, color, seat });
+    const body = { name, color, seat };
+    if (message) body.message = message;
+    const r = await crew.create(body);
     setLastRes({ ...r, method: "PUT /crew" });
     await fetchCrew(false);
     if (r.status >= 200 && r.status < 300) setSelectedSeat(null);

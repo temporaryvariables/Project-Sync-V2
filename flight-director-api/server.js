@@ -605,7 +605,7 @@ app.get("/crew/:id", async (req, res) => {
 
 // PUT /crew — create a new member
 app.put("/crew", async (req, res) => {
-  const { color, seat } = req.body || {};
+  const { color, seat, message } = req.body || {};
   const v = validateName(req.body?.name);
   if (v.error) return res.status(400).json({ error: v.error });
   const name = v.name;
@@ -663,9 +663,9 @@ app.put("/crew", async (req, res) => {
       return res.status(403).json({ error: `Crew is at capacity (${MAX_CREW} seats). Remove someone first.`, max: MAX_CREW });
     }
     const { rows } = await client.query(
-      `INSERT INTO crew_members (name, color, seat, created_by) VALUES ($1, $2, $3, $4)
+      `INSERT INTO crew_members (name, color, message, seat, created_by) VALUES ($1, $2, $3, $4, $5)
        RETURNING id, name, color, message, seat, created_by, version, created_at`,
-      [name, color, seat, req.userId]
+      [name, color, message || null, seat, req.userId]
     );
     await client.query("COMMIT");
     if (lowerName.includes("throttle")) lastThrottleCreate = Date.now();
